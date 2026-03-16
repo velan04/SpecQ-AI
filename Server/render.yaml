@@ -1,12 +1,12 @@
 services:
   - type: web
-    name: my-python-app
+    name: my-fastapi-app
     env: python
     plan: free
     buildCommand: |
-      python -m pip install --upgrade pip
+      python -m pip install --upgrade pip setuptools wheel
       pip install -r requirements.txt --prefer-binary
-    startCommand: gunicorn main:app
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHONUNBUFFERED
         value: 1
