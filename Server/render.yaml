@@ -3,15 +3,11 @@ services:
     name: my-fastapi-app
     env: python
     plan: free
-    pythonVersion: 3.13.6  # <-- IMPORTANT: downgrade to 3.13
-    buildCommand: |
-      python -m pip install --upgrade pip setuptools wheel
-      pip install -r requirements.txt --prefer-binary
+    pythonVersion: 3.11.9
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt --prefer-binary
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHONUNBUFFERED
-        value: 1
-      - key: PORT
-        value: 10000
+        value: "1"
     healthCheckPath: /
     autoDeploy: true
