@@ -1,0 +1,19 @@
+# Core AI framework
+langchain>=0.2.0
+langchain-groq>=0.1.0
+langgraph>=0.1.0
+
+# Groq
+groq>=0.9.0
+
+# Optional: semantic similarity pre-scoring
+sentence-transformers>=2.7.0
+scikit-learn>=1.4.0
+
+# OCR (install one or both)
+pytesseract>=0.3.10
+easyocr>=1.7.1
+Pillow>=10.0.0
+
+# Utilities
+python-dotenv>=1.0.0

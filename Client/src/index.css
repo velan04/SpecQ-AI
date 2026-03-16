@@ -1,0 +1,135 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ReactQuill Styles */
+@import 'react-quill/dist/quill.snow.css';
+
+@layer base {
+  body {
+    @apply bg-gray-50 text-gray-900;
+  }
+}
+
+@layer components {
+  /* Custom scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-track {
+    @apply bg-gray-100 rounded;
+  }
+  
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-gray-300 rounded hover:bg-gray-400;
+  }
+
+  /* Agent card animations */
+  @keyframes slideIn {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-slide-in {
+    animation: slideIn 0.3s ease-out;
+  }
+
+  /* Timeline animations */
+  @keyframes progressPulse {
+    0%, 100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
+
+  .animate-progress-pulse {
+    animation: progressPulse 2s ease-in-out infinite;
+  }
+
+  /* ReactQuill custom styling */
+  .quill-editor {
+    @apply bg-white rounded-lg border border-gray-300;
+  }
+
+  .quill-editor .ql-toolbar {
+    @apply border-b border-gray-300 rounded-t-lg bg-gray-50;
+  }
+
+  .quill-editor .ql-container {
+    @apply rounded-b-lg;
+    min-height: 150px;
+  }
+
+  .quill-editor .ql-editor {
+    min-height: 150px;
+    max-height: 400px;
+    overflow-y: auto;
+  }
+
+  .quill-editor .ql-editor.ql-blank::before {
+    @apply text-gray-400 italic;
+  }
+
+  /* Code preview styles */
+  .code-preview {
+    @apply rounded-lg overflow-hidden border border-gray-300;
+  }
+
+  /* File selector styles */
+  .file-item {
+    @apply p-3 border border-gray-200 rounded-lg hover:border-blue-400 transition-all cursor-pointer;
+  }
+
+  .file-item.selected {
+    @apply border-blue-500 bg-blue-50;
+  }
+
+  .file-item.test-case {
+    @apply border-l-4 border-l-green-500;
+  }
+
+  .file-item.solution {
+    @apply border-l-4 border-l-blue-500;
+  }
+
+  /* Requirements preview */
+  .requirements-card {
+    @apply p-4 bg-gradient-to-br from-blue-50 to-indigo-50 rounded-lg border border-blue-200;
+  }
+
+  /* Result highlight styles for HTML display */
+  .html-content span[style*="color:red"],
+  .html-content span[style*="color: red"] {
+    color: #dc2626 !important;
+    font-weight: bold;
+    text-decoration: line-through;
+  }
+
+  .html-content span[style*="color:green"],
+  .html-content span[style*="color: green"] {
+    color: #16a34a !important;
+    font-weight: bold;
+    background-color: #dcfce7;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+
+  .html-content span[style*="color:orange"],
+  .html-content span[style*="color: orange"] {
+    color: #ea580c !important;
+    font-weight: bold;
+    background-color: #ffedd5;
+    padding: 2px 4px;
+    border-radius: 3px;
+  }
+}

@@ -1,0 +1,156 @@
+{
+  "meta": {
+    "generated_at": "2026-03-16T04:19:40.034615Z",
+    "project": "Product Stock Tracker",
+    "pipeline": "qc-automation v1.0"
+  },
+  "summary": {
+    "total_testcases": 9,
+    "total_desc_requirements": 21,
+    "covered_in_description": 6,
+    "partial_in_description": 3,
+    "not_in_description": 0,
+    "spec_conflicts": 0,
+    "coverage_percent": 83.3,
+    "quality_score": 91.0,
+    "verdict": "PASS"
+  },
+  "per_testcase": [
+    {
+      "id": "verify_heading_content",
+      "name": "Verify Heading Content",
+      "status": "covered",
+      "spec_conflict": false,
+      "conflict_detail": "",
+      "what_testcase_checks": "h3 text includes exact string 'Music Album Collection'",
+      "found_in_description": "The webpage has a heading element with the text 'Music Album Collection'.",
+      "missing_from_description": [],
+      "matched_desc_ids": [
+        "heading_element"
+      ]
+    },
+    {
+      "id": "verify_input_and_button_types",
+      "name": "Verify Input and Button Types",
+      "status": "covered",
+      "spec_conflict": false,
+      "conflict_detail": "",
+      "what_testcase_checks": "input types and button type",
+      "found_in_description": "The webpage has input fields for album name, release year, genre, and favorite checkbox.",
+      "missing_from_description": [],
+      "matched_desc_ids": [
+        "album_name_input",
+        "release_year_input",
+        "genre_selection",
+        "favorite_checkbox",
+        "add_album_button"
+      ]
+    },
+    {
+      "id": "verify_button_background_color",
+      "name": "Verify Button Background Color",
+      "status": "covered",
+      "spec_conflict": false,
+      "conflict_detail": "",
+      "what_testcase_checks": "button#addAlbumBtn background color is 'rgb(76, 175, 80)'",
+      "found_in_description": "The add album button has a background color of 'rgb(76, 175, 80)' or '#4CAF50'.",
+      "missing_from_description": [],
+      "matched_desc_ids": [
+        "add_album_button"
+      ]
+    },
+    {
+      "id": "verify_button_text",
+      "name": "Verify Button Text",
+      "status": "covered",
+      "spec_conflict": false,
+      "conflict_detail": "",
+      "what_testcase_checks": "button#addAlbumBtn text includes exact string 'Add Album'",
+      "found_in_description": "The add album button has a label 'Add Album'.",
+      "missing_from_description": [],
+      "matched_desc_ids": [
+        "add_album_button_label"
+      ]
+    },
+    {
+      "id": "verify_placeholder_and_label_texts",
+      "name": "Verify Placeholder and Label Texts",
+      "status": "partial",
+      "spec_conflict": false,
+      "conflict_detail": "",
+      "what_testcase_checks": "placeholders and labels for album name, release year, genre, and favorite",
+      "found_in_description": "The webpage has placeholders for album name and release year, and labels for genre and favorite.",
+      "missing_from_description": [
+        "labels for album name and release year"
+      ],
+      "matched_desc_ids": [
+        "album_name_placeholder",
+        "release_year_placeholder",
+        "genre_label",
+        "favorite_label"
+      ]
+    },
+    {
+      "id": "verify_page_title",
+      "name": "Verify Page Title",
+      "status": "covered",
+      "spec_conflict": false,
+      "conflict_detail": "",
+      "what_testcase_checks": "page title includes exact string 'Music Album Collection Manager'",
+      "found_in_description": "The webpage title is 'Music Album Collection Manager'.",
+      "missing_from_description": [],
+      "matched_desc_ids": [
+        "web_page_title"
+      ]
+    },
+    {
+      "id": "verify_album_initial_state_and_validation",
+      "name": "Verify Album Initial State and Validation",
+      "status": "covered",
+      "spec_conflict": false,
+      "conflict_detail": "",
+      "what_testcase_checks": "initial album list content, initial favorite list content, and error message",
+      "found_in_description": "The webpage has empty album and favorite lists initially, and an error message 'Please fill out all fields!' when the input fields are not filled.",
+      "missing_from_description": [],
+      "matched_desc_ids": [
+        "album_list",
+        "favorite_album_list",
+        "validation_rule"
+      ]
+    },
+    {
+      "id": "verify_normal_album_addition_and_reset",
+      "name": "Verify Normal Album Addition and Reset",
+      "status": "partial",
+      "spec_conflict": false,
+      "conflict_detail": "",
+      "what_testcase_checks": "album list content, input fields, and favorite checkbox after submission",
+      "found_in_description": "The webpage updates the album list and clears the input fields after submission.",
+      "missing_from_description": [
+        "specific album details"
+      ],
+      "matched_desc_ids": [
+        "album_list_update",
+        "input_field_clearing"
+      ]
+    },
+    {
+      "id": "verify_favorite_album_addition_and_reset",
+      "name": "Verify Favorite Album Addition and Reset",
+      "status": "partial",
+      "spec_conflict": false,
+      "conflict_detail": "",
+      "what_testcase_checks": "favorite list content, input fields, and favorite checkbox after submission",
+      "found_in_description": "The webpage updates the favorite album list and clears the input fields after submission.",
+      "missing_from_description": [
+        "specific album details"
+      ],
+      "matched_desc_ids": [
+        "favorite_album_list_update",
+        "input_field_clearing"
+      ]
+    }
+  ],
+  "spec_conflicts": [],
+  "not_in_description": []
+}
