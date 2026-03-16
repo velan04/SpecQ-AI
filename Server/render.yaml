@@ -1,7 +1,16 @@
 services:
   - type: web
-    name: specq-ai
+    name: my-python-app
     env: python
-    pythonVersion: 3.11.9
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn api:app --host 0.0.0.0 --port $PORT
+    plan: free
+    buildCommand: |
+      python -m pip install --upgrade pip
+      pip install -r requirements.txt --prefer-binary
+    startCommand: gunicorn main:app
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: 1
+      - key: PORT
+        value: 10000
+    healthCheckPath: /
+    autoDeploy: true
