@@ -7,8 +7,8 @@ langgraph==0.1.19
 groq==0.9.0
 
 sentence-transformers==2.7.0
-scikit-learn==1.3.2        # <-- compatible with Python 3.13 wheels
-numpy==1.26.4              # <-- compatible wheel
+scikit-learn==1.4.2
+numpy==1.26.4
 
 requests==2.32.3
 Pillow==10.3.0
