@@ -169,14 +169,6 @@ def node_extract_testcases(state: PipelineState) -> PipelineState:
         return {**state, "error": str(e)}
 
 
-
-    import time
-    from config.settings import RETRY_DELAY_SECONDS
-    logger.info("⏳ Pausing %ds between agents (TPM reset)...", RETRY_DELAY_SECONDS)
-    time.sleep(RETRY_DELAY_SECONDS)
-    return state
-
-
 def node_extract_description(state: PipelineState) -> PipelineState:
     """Node 3 — Description Requirement Extractor Agent."""
     logger.info("═══ Node: extract_description (Agent 3) ═══")

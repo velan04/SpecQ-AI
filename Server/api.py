@@ -1,6 +1,7 @@
 # api.py
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+import uvicorn
 import asyncio, json, shutil, os, logging, threading, queue
 
 from main import run_pipeline
@@ -13,6 +14,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ── Shared pipeline state ─────────────────────────────────────────────────────
 pipeline_status = {"running": False, "error": None}
@@ -29,6 +31,15 @@ _ws_handler.setFormatter(
     logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s", "%H:%M:%S")
 )
 logging.getLogger().addHandler(_ws_handler)
+
+
+@app.get("/")
+def root():
+    return {"status": "ok"}
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))  # use cloud-assigned port
+    uvicorn.run("api:app", host="0.0.0.0", port=port, reload=True)
 
 
 # ── POST /api/run ─────────────────────────────────────────────────────────────
