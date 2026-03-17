@@ -37,10 +37,6 @@ logging.getLogger().addHandler(_ws_handler)
 def root():
     return {"status": "ok"}
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))  # use cloud-assigned port
-    uvicorn.run("api:app", host="0.0.0.0", port=port, reload=True)
-
 
 # ── POST /api/run ─────────────────────────────────────────────────────────────
 @app.post("/api/run")
@@ -58,6 +54,13 @@ async def run(
     with open("data/description.txt", "wb") as f:
         shutil.copyfileobj(description.file, f)
 
+    # Debug: confirm files were written correctly
+    print(
+        f"[DEBUG] CWD={os.getcwd()} | "
+        f"tc={os.path.getsize('data/testcase.js')}B | "
+        f"desc={os.path.getsize('data/description.txt')}B"
+    )
+
     # Clear any leftover log messages from a previous run
     while not log_queue.empty():
         try:
@@ -72,13 +75,16 @@ async def run(
     # Run the heavy pipeline in a background thread so FastAPI stays responsive
     def _run():
         try:
-            run_pipeline()
+            run_pipeline(
+                testcase_path="data/testcase.js",
+                description_path="data/description.txt",
+            )
         except Exception as e:
             pipeline_status["error"] = str(e)
             log_queue.put(f"PIPELINE ERROR: {e}")
         finally:
             pipeline_status["running"] = False
-            log_queue.put("__DONE__")   # signals React to fetch the report
+            log_queue.put("__DONE__")
 
     threading.Thread(target=_run, daemon=True).start()
     return {"status": "started"}
@@ -120,22 +126,25 @@ async def websocket_logs(ws: WebSocket):
 
     try:
         while True:
-            # Try to grab a log line from the queue (non-blocking)
             try:
                 msg = log_queue.get_nowait()
                 await ws.send_text(msg)
                 if msg == "__DONE__":
-                    break                       # pipeline finished — close cleanly
+                    break
             except queue.Empty:
-                # Nothing in queue — sleep briefly then maybe send a ping
                 await asyncio.sleep(0.1)
                 ping_counter += 1
-                if ping_counter >= 50:          # ~5 seconds (50 × 0.1 s)
+                if ping_counter >= 50:
                     ping_counter = 0
                     try:
                         await ws.send_text("__PING__")
                     except Exception:
-                        break                   # client disconnected — stop looping
+                        break
 
     except WebSocketDisconnect:
-        pass                                    
+        pass
+
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("api:app", host="0.0.0.0", port=port, reload=True)

@@ -75,26 +75,32 @@ logger = logging.getLogger("qc_pipeline")
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PipelineState(TypedDict, total=False):
-    # Raw inputs
+    # ── Path hints (passed in initial state) ──────────────────────────────────
+    testcase_path:        str
+    description_path:     str
+    report_path:          str
+    ocr_images_dir:       str
+
+    # ── Raw inputs ────────────────────────────────────────────────────────────
     testcase_content:     str
     description_content:  str
     ocr_text:             str
 
-    # Extracted (raw from LLM)
+    # ── Extracted (raw from LLM) ──────────────────────────────────────────────
     raw_testcase_reqs:    Dict[str, Any]
     raw_desc_reqs:        Dict[str, Any]
 
-    # Normalised
+    # ── Normalised ────────────────────────────────────────────────────────────
     testcase_reqs:        Dict[str, Any]
     desc_reqs:            Dict[str, Any]
 
-    # Comparator output
+    # ── Comparator output ─────────────────────────────────────────────────────
     comparator_result:    Dict[str, Any]
 
-    # Final report
+    # ── Final report ──────────────────────────────────────────────────────────
     qc_report:            Dict[str, Any]
 
-    # Error tracking
+    # ── Error tracking ────────────────────────────────────────────────────────
     error:                str
 
 
@@ -108,6 +114,8 @@ def node_load_inputs(state: PipelineState) -> PipelineState:
     try:
         tc_path   = state.get("testcase_path",    TESTCASE_FILE)
         desc_path = state.get("description_path", DESC_FILE)
+        logger.info("Loading testcase from: %s", tc_path)
+        logger.info("Loading description from: %s", desc_path)
         return {
             **state,
             "testcase_content":    read_testcase(tc_path),
@@ -176,7 +184,6 @@ def node_extract_description(state: PipelineState) -> PipelineState:
         return state
     try:
         agent  = DescriptionExtractorAgent()
-        # Strip base64 image blobs AFTER OCR has already run — prevents 413 errors
         clean_description = strip_base64_images(state["description_content"])
         raw    = agent.extract(
             clean_description,
@@ -225,7 +232,6 @@ def node_save_report(state: PipelineState) -> PipelineState:
     """Node 6 — Save QC report to disk."""
     logger.info("═══ Node: save_report ═══")
     if state.get("error"):
-        # Save error report
         error_report = {"error": state["error"], "status": "PIPELINE_FAILED"}
         report_path  = state.get("report_path", REPORT_FILE)
         os.makedirs(os.path.dirname(report_path), exist_ok=True)
@@ -259,16 +265,14 @@ def build_graph() -> StateGraph:
     """Construct and compile the QC pipeline LangGraph."""
     graph = StateGraph(PipelineState)
 
-    # Register nodes
-    graph.add_node("load_inputs",        node_load_inputs)
-    graph.add_node("ocr_extract",        node_ocr_extract)
-    graph.add_node("extract_testcases",  node_extract_testcases)
-    graph.add_node("extract_description",node_extract_description)
-    graph.add_node("compare",            node_compare)
-    graph.add_node("analyze_coverage",   node_analyze_coverage)
-    graph.add_node("save_report",        node_save_report)
+    graph.add_node("load_inputs",         node_load_inputs)
+    graph.add_node("ocr_extract",         node_ocr_extract)
+    graph.add_node("extract_testcases",   node_extract_testcases)
+    graph.add_node("extract_description", node_extract_description)
+    graph.add_node("compare",             node_compare)
+    graph.add_node("analyze_coverage",    node_analyze_coverage)
+    graph.add_node("save_report",         node_save_report)
 
-    # Wire edges (sequential pipeline)
     graph.set_entry_point("load_inputs")
     graph.add_edge("load_inputs",         "ocr_extract")
     graph.add_edge("ocr_extract",         "extract_testcases")
@@ -282,7 +286,7 @@ def build_graph() -> StateGraph:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CLI Entry Point
+# Entry Point
 # ─────────────────────────────────────────────────────────────────────────────
 
 def run_pipeline(
@@ -317,9 +321,9 @@ def run_pipeline(
     }
 
     logger.info("🚀 Starting QC Automation Pipeline")
-    logger.info("   Testcase  : %s", testcase_path)
+    logger.info("   Testcase   : %s", testcase_path)
     logger.info("   Description: %s", description_path)
-    logger.info("   Report    : %s", report_path)
+    logger.info("   Report     : %s", report_path)
 
     final_state = graph.invoke(initial_state)
 
@@ -340,10 +344,10 @@ def run_pipeline(
         print(f"  Coverage %                : {summary.get('coverage_percent', '?')}%")
         print(f"  Quality Score             : {summary.get('quality_score', '?')}/100")
         print(f"  Verdict                   : {summary.get('verdict', '?')}")
-        if report.get('spec_conflicts'):
+        if report.get("spec_conflicts"):
             print(f"")
             print(f"  SPEC CONFLICTS (testcase contradicts description):")
-            for c in report['spec_conflicts']:
+            for c in report["spec_conflicts"]:
                 print(f"  ⚠  {c['id']}: {c['conflict_detail']}")
         print("═" * 60)
         print(f"  Full report saved → {report_path}\n")
