@@ -653,15 +653,6 @@ function App() {
           </div>
         )}
       </main>
-
-      {/* ── Footer ──────────────────────────────────────────────────────────── */}
-      <footer style={{
-        background: T.surface, borderTop: `1px solid ${T.border}`,
-        padding: '16px 28px', textAlign: 'center',
-        fontSize: '12px', color: T.textMuted, letterSpacing: '0.02em',
-      }}>
-        QC Automation · LangGraph + LangChain + Groq · 7-Step Pipeline
-      </footer>
     </div>
   );
 }
