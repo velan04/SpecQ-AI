@@ -1,5 +1,6 @@
 // src/services/api.js
 const BASE = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const WS_BASE = BASE.replace('https://', 'wss://').replace('http://', 'ws://');
 
 /**
  * Upload testcase content (string from ZIP) + description HTML → trigger pipeline.
@@ -24,4 +25,4 @@ export const getReport = () =>
 
 /** Open WebSocket for live log streaming. Sends "__DONE__" when pipeline finishes */
 export const createLogSocket = () =>
-  new WebSocket(`ws://localhost:8000/api/logs`);
+  new WebSocket(`${WS_BASE}/api/logs`);
