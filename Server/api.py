@@ -4,8 +4,6 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 import asyncio, json, shutil, os, logging, threading, queue
 
-from main import run_pipeline
-
 app = FastAPI()
 
 app.add_middleware(
@@ -75,6 +73,7 @@ async def run(
     # Run the heavy pipeline in a background thread so FastAPI stays responsive
     def _run():
         try:
+            from main import run_pipeline
             run_pipeline(
                 testcase_path="data/testcase.js",
                 description_path="data/description.txt",
