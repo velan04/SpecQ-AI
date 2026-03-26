@@ -2,7 +2,7 @@
 from fastapi import FastAPI, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import asyncio, json, shutil, os, logging, threading, queue
+import asyncio, json, os, logging, threading, queue
 
 app = FastAPI()
 
@@ -19,16 +19,31 @@ pipeline_status = {"running": False, "error": None}
 log_queue: queue.Queue = queue.Queue()
 
 
-# ── WebSocket log handler — captures ALL pipeline logs ───────────────────────
+# ── WebSocket log handler ─────────────────────────────────────────────────────
 class QueueLogHandler(logging.Handler):
     def emit(self, record):
-        log_queue.put(self.format(record))
+        try:
+            log_queue.put_nowait(self.format(record))
+        except Exception:
+            pass
 
-_ws_handler = QueueLogHandler()
-_ws_handler.setFormatter(
-    logging.Formatter("%(asctime)s [%(levelname)s] %(name)s — %(message)s", "%H:%M:%S")
+_formatter = logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(name)s — %(message)s", "%H:%M:%S"
 )
-logging.getLogger().addHandler(_ws_handler)
+_ws_handler = QueueLogHandler()
+_ws_handler.setFormatter(_formatter)
+
+# Attach to root logger at DEBUG — every child logger is captured automatically
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.DEBUG)
+root_logger.addHandler(_ws_handler)
+
+# Also explicitly attach to all pipeline logger namespaces
+for _name in ("qc_pipeline", "main", "agents", "pipeline", "tools"):
+    _l = logging.getLogger(_name)
+    _l.setLevel(logging.DEBUG)
+    _l.addHandler(_ws_handler)
+    _l.propagate = True
 
 
 @app.get("/")
@@ -45,45 +60,58 @@ async def run(
     if pipeline_status["running"]:
         return {"status": "already_running"}
 
-    # Save uploaded files to disk
     os.makedirs("data", exist_ok=True)
-    with open("data/testcase.js",     "wb") as f:
-        shutil.copyfileobj(testcase.file, f)
-    with open("data/description.txt", "wb") as f:
-        shutil.copyfileobj(description.file, f)
 
-    # Debug: confirm files were written correctly
-    print(
-        f"[DEBUG] CWD={os.getcwd()} | "
-        f"tc={os.path.getsize('data/testcase.js')}B | "
-        f"desc={os.path.getsize('data/description.txt')}B"
-    )
+    # Read bytes then write as UTF-8 text (handles HTML + base64 images correctly)
+    testcase_bytes    = await testcase.read()
+    description_bytes = await description.read()
 
-    # Clear any leftover log messages from a previous run
+    with open("data/testcase.js",     "w", encoding="utf-8") as f:
+        f.write(testcase_bytes.decode("utf-8"))
+    with open("data/description.txt", "w", encoding="utf-8") as f:
+        f.write(description_bytes.decode("utf-8"))
+
+    tc_size   = os.path.getsize("data/testcase.js")
+    desc_size = os.path.getsize("data/description.txt")
+    print(f"[DEBUG] CWD={os.getcwd()} | tc={tc_size}B | desc={desc_size}B")
+
+    # Clear leftover logs from previous run AFTER writing the size info
     while not log_queue.empty():
         try:
             log_queue.get_nowait()
         except queue.Empty:
             break
 
-    # Mark as running
+    # Put a first visible log so the frontend knows things are moving
+    log_queue.put_nowait(
+        f"00:00:00 [INFO] qc_pipeline — Files received — testcase: {tc_size}B | description: {desc_size}B"
+    )
+
     pipeline_status["running"] = True
     pipeline_status["error"]   = None
 
-    # Run the heavy pipeline in a background thread so FastAPI stays responsive
     def _run():
+        logger = logging.getLogger("qc_pipeline")
+        # Re-attach inside thread for safety (some environments isolate per-thread)
+        if _ws_handler not in logger.handlers:
+            logger.addHandler(_ws_handler)
         try:
+            logger.info("Pipeline thread started — importing modules…")
             from main import run_pipeline
             run_pipeline(
-                testcase_path="data/testcase.js",
-                description_path="data/description.txt",
+                testcase_path    = "data/testcase.js",
+                description_path = "data/description.txt",
             )
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             pipeline_status["error"] = str(e)
-            log_queue.put(f"PIPELINE ERROR: {e}")
+            log_queue.put_nowait(f"[ERROR] Pipeline crashed: {e}")
+            for line in tb.splitlines():
+                log_queue.put_nowait(f"[ERROR] {line}")
         finally:
             pipeline_status["running"] = False
-            log_queue.put("__DONE__")
+            log_queue.put_nowait("__DONE__")
 
     threading.Thread(target=_run, daemon=True).start()
     return {"status": "started"}
@@ -92,7 +120,6 @@ async def run(
 # ── GET /api/status ───────────────────────────────────────────────────────────
 @app.get("/api/status")
 def get_status():
-    """React polls this every 2 s as a fallback when the WebSocket closes early."""
     return {
         "running": pipeline_status["running"],
         "error":   pipeline_status["error"],
@@ -116,29 +143,33 @@ async def websocket_logs(ws: WebSocket):
     Streams pipeline log lines to the React frontend in real time.
 
     Protocol:
-      "__PING__"  — keepalive sent every ~5 s so the browser does not close the socket
-      "__DONE__"  — pipeline finished; React should call GET /api/report
-      any other   — a raw log line to display in the terminal panel
+      "__PING__"  — keepalive every ~5 s
+      "__DONE__"  — pipeline finished; frontend calls GET /api/report
+      any other   — log line for the terminal panel
     """
     await ws.accept()
     ping_counter = 0
 
     try:
         while True:
-            try:
-                msg = log_queue.get_nowait()
-                await ws.send_text(msg)
-                if msg == "__DONE__":
+            # Drain entire queue in one pass before sleeping
+            while True:
+                try:
+                    msg = log_queue.get_nowait()
+                    await ws.send_text(msg)
+                    if msg == "__DONE__":
+                        return
+                except queue.Empty:
                     break
-            except queue.Empty:
-                await asyncio.sleep(0.1)
-                ping_counter += 1
-                if ping_counter >= 50:
-                    ping_counter = 0
-                    try:
-                        await ws.send_text("__PING__")
-                    except Exception:
-                        break
+
+            await asyncio.sleep(0.1)
+            ping_counter += 1
+            if ping_counter >= 50:   # ~5 s
+                ping_counter = 0
+                try:
+                    await ws.send_text("__PING__")
+                except Exception:
+                    break
 
     except WebSocketDisconnect:
         pass

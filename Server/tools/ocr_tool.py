@@ -1,16 +1,11 @@
 """
-OCR Tool — extracts text from images using HuggingFace PaddleOCR API.
-Supports:
-  1. Base64-encoded images embedded in description HTML (data:image/... URIs)
-  2. Image files in a directory (ocr_images/)
+OCR Tool — extracts text from base64-encoded images embedded in description HTML.
+Supports base64-encoded images embedded in description HTML (data:image/... URIs).
 """
 import os
 import re
-import glob
-import base64
 import logging
 import time
-from pathlib import Path
 
 import requests
 
@@ -26,29 +21,6 @@ TIMEOUT_S     = 120 # covers cold start + queue wait
 # ─────────────────────────────────────────────────────────────────────────────
 # Public API
 # ─────────────────────────────────────────────────────────────────────────────
-
-def extract_text_from_images(images_dir: str) -> str:
-    """Extract text from image FILES in a directory via HuggingFace OCR."""
-    if not os.path.isdir(images_dir):
-        logger.warning("OCR images directory not found: %s", images_dir)
-        return ""
-
-    image_files = []
-    for ext in ("*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp"):
-        image_files.extend(glob.glob(os.path.join(images_dir, ext)))
-
-    if not image_files:
-        logger.info("No image files found for OCR.")
-        return ""
-
-    logger.info("Found %d image(s) for OCR.", len(image_files))
-    combined = []
-    for img_path in sorted(image_files):
-        text = _ocr_file(img_path)
-        if text.strip():
-            combined.append(f"[Image: {Path(img_path).name}]\n{text.strip()}")
-    return "\n\n".join(combined)
-
 
 def extract_base64_images_from_text(html: str) -> str:
     """
@@ -133,15 +105,3 @@ def _ocr_base64_api(pure_b64: str, index: int = 1) -> str:
 
     logger.error("[OCR] Image %d: all %d attempts failed.", index, MAX_RETRIES)
     return ""
-
-
-def _ocr_file(img_path: str) -> str:
-    """Read an image file, encode as base64, send to HuggingFace OCR API."""
-    try:
-        with open(img_path, "rb") as f:
-            raw = f.read()
-        pure_b64 = base64.b64encode(raw).decode("utf-8")
-        return _ocr_base64_api(pure_b64, index=0)
-    except Exception as e:
-        logger.warning("Failed to read/encode image file %s: %s", img_path, e)
-        return ""

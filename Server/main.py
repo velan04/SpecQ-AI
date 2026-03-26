@@ -9,7 +9,7 @@ LangGraph-orchestrated multi-agent pipeline:
   load_inputs          (reads testcase.js, description.txt)
      │
      ▼
-  ocr_extract          (optional — extracts text from ocr_images/)
+  ocr_extract          (optional — extracts base64 images from description)
      │
      ▼
   extract_testcases    (Agent 2 — Testcase Requirement Extractor)
@@ -43,14 +43,13 @@ from langgraph.graph import StateGraph, END
 from config.settings import (
     GROQ_API_KEY,
     OCR_ENABLED,
-    OCR_IMAGES_DIR,
     TESTCASE_FILE,
     DESC_FILE,
     REPORT_FILE,
     VERBOSE,
 )
 from tools.parser_tool    import read_testcase, read_description
-from tools.ocr_tool       import extract_text_from_images, extract_base64_images_from_text
+from tools.ocr_tool       import extract_base64_images_from_text
 from tools.text_cleaner   import strip_base64_images
 from pipeline.normalizer  import (
     normalize_testcase_requirements,
@@ -79,7 +78,6 @@ class PipelineState(TypedDict, total=False):
     testcase_path:        str
     description_path:     str
     report_path:          str
-    ocr_images_dir:       str
 
     # ── Raw inputs ────────────────────────────────────────────────────────────
     testcase_content:     str
@@ -127,10 +125,7 @@ def node_load_inputs(state: PipelineState) -> PipelineState:
 
 
 def node_ocr_extract(state: PipelineState) -> PipelineState:
-    """Node 1b — OCR extraction from:
-       1. Base64 images embedded inside description.txt
-       2. Image files in ocr_images/ directory (if present)
-    """
+    """Node 1b — OCR extraction from base64 images embedded in description."""
     logger.info("═══ Node: ocr_extract ═══")
     if state.get("error"):
         return state
@@ -138,28 +133,17 @@ def node_ocr_extract(state: PipelineState) -> PipelineState:
         logger.info("OCR disabled — skipping.")
         return {**state, "ocr_text": ""}
 
-    combined_ocr = []
-
-    # Strategy 1: Extract base64 images embedded in description text
     description_content = state.get("description_content", "")
-    if description_content:
-        b64_text = extract_base64_images_from_text(description_content)
-        if b64_text:
-            logger.info("Base64 OCR: extracted %d chars from embedded images.", len(b64_text))
-            combined_ocr.append(b64_text)
-        else:
-            logger.info("No base64 images found in description text.")
+    if not description_content:
+        return {**state, "ocr_text": ""}
 
-    # Strategy 2: Image files in ocr_images/ directory
-    images_dir = state.get("ocr_images_dir", OCR_IMAGES_DIR)
-    file_text  = extract_text_from_images(images_dir)
-    if file_text:
-        logger.info("File OCR: extracted %d chars from image files.", len(file_text))
-        combined_ocr.append(file_text)
+    b64_text = extract_base64_images_from_text(description_content)
+    if b64_text:
+        logger.info("Base64 OCR: extracted %d chars from embedded images.", len(b64_text))
+    else:
+        logger.info("No base64 images found in description text.")
 
-    ocr_text = "\n\n".join(combined_ocr)
-    logger.info("Total OCR extracted: %d chars.", len(ocr_text))
-    return {**state, "ocr_text": ocr_text}
+    return {**state, "ocr_text": b64_text}
 
 
 def node_extract_testcases(state: PipelineState) -> PipelineState:
@@ -293,7 +277,6 @@ def run_pipeline(
     testcase_path:    str = TESTCASE_FILE,
     description_path: str = DESC_FILE,
     report_path:      str = REPORT_FILE,
-    ocr_images_dir:   str = OCR_IMAGES_DIR,
 ) -> Dict[str, Any]:
     """
     Run the full QC automation pipeline.
@@ -302,7 +285,6 @@ def run_pipeline(
         testcase_path:    Path to testcase.js
         description_path: Path to description.txt
         report_path:      Output path for qc_report.json
-        ocr_images_dir:   Directory of images for OCR (optional)
 
     Returns:
         Final pipeline state dict (includes qc_report)
@@ -317,7 +299,6 @@ def run_pipeline(
         "testcase_path":    testcase_path,
         "description_path": description_path,
         "report_path":      report_path,
-        "ocr_images_dir":   ocr_images_dir,
     }
 
     logger.info("🚀 Starting QC Automation Pipeline")
@@ -359,15 +340,13 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="QC Automation Pipeline")
-    parser.add_argument("--testcase",    default=TESTCASE_FILE,    help="Path to testcase.js")
-    parser.add_argument("--description", default=DESC_FILE,        help="Path to description.txt")
-    parser.add_argument("--report",      default=REPORT_FILE,      help="Output path for qc_report.json")
-    parser.add_argument("--ocr-dir",     default=OCR_IMAGES_DIR,   help="Directory of OCR images")
+    parser.add_argument("--testcase",    default=TESTCASE_FILE,  help="Path to testcase.js")
+    parser.add_argument("--description", default=DESC_FILE,      help="Path to description.txt")
+    parser.add_argument("--report",      default=REPORT_FILE,    help="Output path for qc_report.json")
     args = parser.parse_args()
 
     run_pipeline(
         testcase_path    = args.testcase,
         description_path = args.description,
         report_path      = args.report,
-        ocr_images_dir   = args.ocr_dir,
     )
