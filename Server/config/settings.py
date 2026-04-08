@@ -31,7 +31,7 @@ GROQ_MODEL_FAST   = "llama-3.1-8b-instant"      # testcase extractor
 GROQ_MODEL_STRONG = "llama-3.3-70b-versatile"   # description extractor + comparator
 
 # ── Token limits ──────────────────────────────────────────────────────────────
-MAX_TOKENS_FAST   = 8192
+MAX_TOKENS_FAST   = 2000
 MAX_TOKENS_STRONG = 8192
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────

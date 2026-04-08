@@ -85,17 +85,16 @@ class KeyRotator:
 
             except Exception as e:
                 err_str = str(e)
-                if "429" in err_str or "rate_limit" in err_str.lower() or "Too Many Requests" in err_str:
-                    logger.warning(
-                        "Key %d/%d rate-limited (429). Rotating to next key...",
-                        key_idx + 1, len(self.api_keys)
+                if "413" in err_str or "Payload Too Large" in err_str:
+                    raise RuntimeError(
+                        f"Request too large for model token budget. "
+                        f"Reduce max_tokens in settings.py. Error: {e}"
                     )
+                elif "429" in err_str or "rate_limit" in err_str.lower():
                     self._rotate()
                 elif "401" in err_str or "invalid_api_key" in err_str.lower():
-                    logger.error("Key %d/%d is invalid. Skipping.", key_idx + 1, len(self.api_keys))
                     self._rotate()
                 else:
-                    # Non-rate-limit error — re-raise
                     raise
 
     # ── Internal helpers ──────────────────────────────────────────────────────
