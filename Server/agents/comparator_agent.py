@@ -4,7 +4,10 @@ import logging
 import re
 from typing import Any, Dict
 
-from config.settings import GROQ_API_KEYS, GROQ_MODEL_STRONG, MAX_TOKENS_STRONG, MAX_RETRIES
+from config.settings import (
+    GROQ_API_KEYS, GROQ_MODEL_COMPARATOR, MAX_TOKENS_COMPARATOR,
+    MAX_RETRIES, COMPARATOR_BATCH_SIZE,
+)
 from tools.key_rotator import KeyRotator
 from prompts.comparator_prompt import COMPARATOR_SYSTEM, COMPARATOR_USER
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -15,8 +18,11 @@ logger = logging.getLogger(__name__)
 class ComparatorAgent:
 
     def __init__(self):
-        self.rotator = KeyRotator(GROQ_API_KEYS, GROQ_MODEL_STRONG, MAX_TOKENS_STRONG)
-        logger.info("ComparatorAgent ready (%d key(s))", len(GROQ_API_KEYS))
+        # Use MAX_TOKENS_COMPARATOR (not MAX_TOKENS_STRONG) so that
+        # input_tokens + max_output_tokens stays under Groq's 12 000-token
+        # per-request hard limit for llama-3.3-70b-versatile on the free tier.
+        self.rotator = KeyRotator(GROQ_API_KEYS, GROQ_MODEL_COMPARATOR, MAX_TOKENS_COMPARATOR)
+        logger.info("ComparatorAgent ready (%d key(s), max_tokens=%d)", len(GROQ_API_KEYS), MAX_TOKENS_COMPARATOR)
 
     def compare(
         self,
@@ -24,6 +30,59 @@ class ComparatorAgent:
         description_requirements: Dict[str, Any],
     ) -> Dict[str, Any]:
 
+        all_testcases  = testcase_requirements.get("testcases", [])
+        total_count    = len(all_testcases)
+
+        # ── Batch processing ──────────────────────────────────────────────────
+        # Split testcases into chunks so each API call stays under the
+        # 12 000-token combined (input + output) request limit.
+        batches = [
+            all_testcases[i : i + COMPARATOR_BATCH_SIZE]
+            for i in range(0, max(total_count, 1), COMPARATOR_BATCH_SIZE)
+        ]
+        logger.info(
+            "ComparatorAgent: %d testcase(s) split into %d batch(es) of ≤%d",
+            total_count, len(batches), COMPARATOR_BATCH_SIZE,
+        )
+
+        all_coverage: list = []
+        for batch_idx, batch in enumerate(batches, start=1):
+            batch_reqs = {**testcase_requirements, "testcases": batch}
+            batch_coverage = self._compare_batch(
+                batch_idx, len(batches), batch_reqs, description_requirements
+            )
+            all_coverage.extend(batch_coverage)
+
+        # ── Rebuild summary from merged coverage ──────────────────────────────
+        covered  = [t for t in all_coverage if t.get("status") == "covered"]
+        partial  = [t for t in all_coverage if t.get("status") == "partial"]
+        not_desc = [t for t in all_coverage if t.get("status") == "not_in_description"]
+        conflicts = [t for t in all_coverage if t.get("spec_conflict")]
+        logger.info(
+            "Comparison done — %d covered, %d partial, %d not_in_description",
+            len(covered), len(partial), len(not_desc),
+        )
+        return {
+            "testcase_coverage": all_coverage,
+            "summary": {
+                "total_testcases":        total_count,
+                "covered_in_description": len(covered),
+                "partial_in_description": len(partial),
+                "not_in_description":     len(not_desc),
+                "spec_conflicts":         len(conflicts),
+            },
+        }
+
+    # ── Private helpers ───────────────────────────────────────────────────────
+
+    def _compare_batch(
+        self,
+        batch_idx:                int,
+        total_batches:            int,
+        testcase_requirements:    Dict[str, Any],
+        description_requirements: Dict[str, Any],
+    ) -> list:
+        """Run a single batch and return its testcase_coverage list."""
         testcase_count = len(testcase_requirements.get("testcases", []))
 
         user_msg = COMPARATOR_USER.format(
@@ -38,37 +97,32 @@ class ComparatorAgent:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                logger.info("ComparatorAgent: attempt %d/%d (testcases=%d)", attempt, MAX_RETRIES, testcase_count)
+                logger.info(
+                    "ComparatorAgent batch %d/%d: attempt %d/%d (testcases=%d)",
+                    batch_idx, total_batches, attempt, MAX_RETRIES, testcase_count,
+                )
                 raw    = self.rotator.invoke_with_rotation(messages)
                 result = _parse_json_robust(raw)
 
-                # Validate all testcases were processed
                 coverage = result.get("testcase_coverage", [])
                 if len(coverage) < testcase_count:
                     logger.warning(
-                        "ComparatorAgent returned %d results for %d testcases — retrying",
-                        len(coverage), testcase_count
+                        "Batch %d returned %d results for %d testcases — retrying",
+                        batch_idx, len(coverage), testcase_count,
                     )
                     if attempt < MAX_RETRIES:
                         continue
                     else:
                         logger.warning("Proceeding with partial results after %d attempts", MAX_RETRIES)
 
-                covered  = [t for t in coverage if t.get("status") == "covered"]
-                partial  = [t for t in coverage if t.get("status") == "partial"]
-                not_desc = [t for t in coverage if t.get("status") == "not_in_description"]
-                logger.info(
-                    "Comparison done — %d covered, %d partial, %d not_in_description",
-                    len(covered), len(partial), len(not_desc),
-                )
-                return result
+                return coverage
 
             except Exception as e:
-                logger.warning("Attempt %d failed: %s", attempt, e)
+                logger.warning("Batch %d attempt %d failed: %s", batch_idx, attempt, e)
                 if attempt == MAX_RETRIES:
                     raise RuntimeError(f"ComparatorAgent failed: {e}")
 
-        return {"testcase_coverage": [], "summary": {}}
+        return []
 
 
 def _parse_json_robust(raw: str) -> Dict[str, Any]:

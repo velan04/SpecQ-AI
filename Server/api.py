@@ -16,7 +16,8 @@ app.add_middleware(
 
 # ── Shared pipeline state ─────────────────────────────────────────────────────
 pipeline_status = {"running": False, "error": None}
-log_queue: queue.Queue = queue.Queue()
+log_queue:    queue.Queue     = queue.Queue()
+cancel_event: threading.Event = threading.Event()   # set() to request a stop
 
 
 # ── WebSocket log handler ─────────────────────────────────────────────────────
@@ -33,17 +34,11 @@ _formatter = logging.Formatter(
 _ws_handler = QueueLogHandler()
 _ws_handler.setFormatter(_formatter)
 
-# Attach to root logger at DEBUG — every child logger is captured automatically
+# Attach only to root logger — child loggers propagate up automatically.
+# Attaching to both root AND named children causes every log line to appear twice.
 root_logger = logging.getLogger()
 root_logger.setLevel(logging.DEBUG)
 root_logger.addHandler(_ws_handler)
-
-# Also explicitly attach to all pipeline logger namespaces
-for _name in ("qc_pipeline", "main", "agents", "pipeline", "tools"):
-    _l = logging.getLogger(_name)
-    _l.setLevel(logging.DEBUG)
-    _l.addHandler(_ws_handler)
-    _l.propagate = True
 
 
 @app.get("/")
@@ -89,6 +84,7 @@ async def run(
 
     pipeline_status["running"] = True
     pipeline_status["error"]   = None
+    cancel_event.clear()          # reset any previous cancel request
 
     def _run():
         logger = logging.getLogger("qc_pipeline")
@@ -101,6 +97,7 @@ async def run(
             run_pipeline(
                 testcase_path    = "data/testcase.js",
                 description_path = "data/description.txt",
+                cancel_event     = cancel_event,
             )
         except Exception as e:
             import traceback
@@ -124,6 +121,27 @@ def get_status():
         "running": pipeline_status["running"],
         "error":   pipeline_status["error"],
     }
+
+
+# ── POST /api/cancel ──────────────────────────────────────────────────────────
+@app.post("/api/cancel")
+def cancel_pipeline():
+    """
+    Signal the running pipeline to stop and immediately mark it as not running.
+
+    The background thread may still be mid-request to Groq (those calls are not
+    interruptible), but pipeline_status is reset right away so the frontend can
+    start a fresh run without waiting for the old thread to fully unwind.
+    """
+    if not pipeline_status["running"]:
+        return {"status": "not_running"}
+
+    cancel_event.set()                    # tell the pipeline to stop at next checkpoint
+    pipeline_status["running"] = False    # unblock the frontend immediately
+    pipeline_status["error"]   = "Cancelled by user"
+    log_queue.put_nowait("[INFO] Pipeline cancelled by user.")
+    log_queue.put_nowait("__DONE__")
+    return {"status": "cancelled"}
 
 
 # ── GET /api/report ───────────────────────────────────────────────────────────
@@ -172,7 +190,18 @@ async def websocket_logs(ws: WebSocket):
                     break
 
     except WebSocketDisconnect:
-        pass
+        # Frontend reloaded or closed the tab while the pipeline was running.
+        # Reset running state immediately so the next /api/run isn't blocked.
+        if pipeline_status["running"]:
+            cancel_event.set()
+            pipeline_status["running"] = False
+            pipeline_status["error"]   = "Client disconnected"
+            # Drain the queue so stale logs don't bleed into the next run
+            while not log_queue.empty():
+                try:
+                    log_queue.get_nowait()
+                except queue.Empty:
+                    break
 
 
 if __name__ == "__main__":

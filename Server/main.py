@@ -277,6 +277,7 @@ def run_pipeline(
     testcase_path:    str = TESTCASE_FILE,
     description_path: str = DESC_FILE,
     report_path:      str = REPORT_FILE,
+    cancel_event=None,
 ) -> Dict[str, Any]:
     """
     Run the full QC automation pipeline.
@@ -285,6 +286,8 @@ def run_pipeline(
         testcase_path:    Path to testcase.js
         description_path: Path to description.txt
         report_path:      Output path for qc_report.json
+        cancel_event:     Optional threading.Event; pipeline aborts between
+                          nodes when it is set (e.g. on client disconnect).
 
     Returns:
         Final pipeline state dict (includes qc_report)
@@ -305,6 +308,10 @@ def run_pipeline(
     logger.info("   Testcase   : %s", testcase_path)
     logger.info("   Description: %s", description_path)
     logger.info("   Report     : %s", report_path)
+
+    if cancel_event and cancel_event.is_set():
+        logger.info("Pipeline cancelled before start.")
+        return {}
 
     final_state = graph.invoke(initial_state)
 

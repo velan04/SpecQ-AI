@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 # ── HuggingFace PaddleOCR API ─────────────────────────────────────────────────
 OCR_API_URL   = os.getenv("OCR_API_URL", "https://velan2904-image-ocr.hf.space/ocr")
+HF_TOKEN      = os.getenv("HF_TOKEN", "")          # required for private Spaces
 MAX_RETRIES   = 4
 BASE_DELAY_S  = 5   # 5s, 10s, 15s, 20s
 TIMEOUT_S     = 120 # covers cold start + queue wait
@@ -71,13 +72,19 @@ def extract_base64_images_from_text(html: str) -> str:
 
 def _ocr_base64_api(pure_b64: str, index: int = 1) -> str:
     """Send pure base64 string to HuggingFace PaddleOCR API with retry."""
+    headers = {"Content-Type": "application/json"}
+    if HF_TOKEN:
+        headers["Authorization"] = f"Bearer {HF_TOKEN}"
+    else:
+        logger.warning("[OCR] HF_TOKEN not set — request may fail for private Spaces.")
+
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             logger.info("[OCR] Image %d — attempt %d/%d", index, attempt, MAX_RETRIES)
             resp = requests.post(
                 OCR_API_URL,
                 json={"image": pure_b64},
-                headers={"Content-Type": "application/json"},
+                headers=headers,
                 timeout=TIMEOUT_S,
             )
 
@@ -85,6 +92,15 @@ def _ocr_base64_api(pure_b64: str, index: int = 1) -> str:
                 text = (resp.json().get("text") or "").strip()
                 logger.info("[OCR] Image %d done ✓ (%d chars)", index, len(text))
                 return text
+
+            elif resp.status_code == 404:
+                # Endpoint doesn't exist — retrying won't help
+                logger.error(
+                    "[OCR] Image %d: endpoint returned 404 (not found). "
+                    "Check OCR_API_URL in settings. Skipping OCR.",
+                    index,
+                )
+                return ""
 
             elif resp.status_code == 503:
                 logger.warning("[OCR] Image %d: queue full (503), retrying...", index)
