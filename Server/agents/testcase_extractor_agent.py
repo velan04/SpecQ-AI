@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Any, Dict
 
-from config.settings import GROQ_API_KEYS, GROQ_MODEL_FAST, MAX_TOKENS_FAST, MAX_RETRIES
+from config.settings import GROQ_API_KEYS_FAST, GROQ_MODEL_FAST, MAX_TOKENS_FAST, MAX_RETRIES
 from tools.key_rotator import KeyRotator
 from prompts.testcase_prompt import TESTCASE_SYSTEM, TESTCASE_USER
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 class TestcaseExtractorAgent:
 
     def __init__(self):
-        self.rotator = KeyRotator(GROQ_API_KEYS, GROQ_MODEL_FAST, MAX_TOKENS_FAST)
-        logger.info("TestcaseExtractorAgent ready (%d key(s))", len(GROQ_API_KEYS))
+        self.rotator = KeyRotator(GROQ_API_KEYS_FAST, GROQ_MODEL_FAST, MAX_TOKENS_FAST)
+        logger.info("TestcaseExtractorAgent ready (%d key(s))", len(GROQ_API_KEYS_FAST))
 
     def extract(self, testcase_content: str) -> Dict[str, Any]:
         messages = [

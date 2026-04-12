@@ -5,7 +5,7 @@ import re
 from typing import Any, Dict
 
 from config.settings import (
-    GROQ_API_KEYS, GROQ_MODEL_COMPARATOR, MAX_TOKENS_COMPARATOR,
+    GROQ_API_KEYS_COMPARATOR, GROQ_MODEL_COMPARATOR, MAX_TOKENS_COMPARATOR,
     MAX_RETRIES, COMPARATOR_BATCH_SIZE,
 )
 from tools.key_rotator import KeyRotator
@@ -21,8 +21,8 @@ class ComparatorAgent:
         # Use MAX_TOKENS_COMPARATOR (not MAX_TOKENS_STRONG) so that
         # input_tokens + max_output_tokens stays under Groq's 12 000-token
         # per-request hard limit for llama-3.3-70b-versatile on the free tier.
-        self.rotator = KeyRotator(GROQ_API_KEYS, GROQ_MODEL_COMPARATOR, MAX_TOKENS_COMPARATOR)
-        logger.info("ComparatorAgent ready (%d key(s), max_tokens=%d)", len(GROQ_API_KEYS), MAX_TOKENS_COMPARATOR)
+        self.rotator = KeyRotator(GROQ_API_KEYS_COMPARATOR, GROQ_MODEL_COMPARATOR, MAX_TOKENS_COMPARATOR)
+        logger.info("ComparatorAgent ready (%d key(s), max_tokens=%d)", len(GROQ_API_KEYS_COMPARATOR), MAX_TOKENS_COMPARATOR)
 
     def compare(
         self,

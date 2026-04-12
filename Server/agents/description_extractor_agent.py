@@ -4,7 +4,7 @@ import logging
 import re
 from typing import Any, Dict
 
-from config.settings import GROQ_API_KEYS, GROQ_MODEL_STRONG, MAX_TOKENS_STRONG, MAX_RETRIES
+from config.settings import GROQ_API_KEYS_STRONG, GROQ_MODEL_STRONG, MAX_TOKENS_STRONG, MAX_RETRIES
 from tools.key_rotator import KeyRotator
 from prompts.description_prompt import DESCRIPTION_SYSTEM, DESCRIPTION_USER
 from langchain_core.messages import SystemMessage, HumanMessage
@@ -15,8 +15,8 @@ logger = logging.getLogger(__name__)
 class DescriptionExtractorAgent:
 
     def __init__(self):
-        self.rotator = KeyRotator(GROQ_API_KEYS, GROQ_MODEL_STRONG, MAX_TOKENS_STRONG)
-        logger.info("DescriptionExtractorAgent ready (%d key(s))", len(GROQ_API_KEYS))
+        self.rotator = KeyRotator(GROQ_API_KEYS_STRONG, GROQ_MODEL_STRONG, MAX_TOKENS_STRONG)
+        logger.info("DescriptionExtractorAgent ready (%d key(s))", len(GROQ_API_KEYS_STRONG))
 
     def extract(self, description_content: str, ocr_text: str = "") -> Dict[str, Any]:
         messages = [

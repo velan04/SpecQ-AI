@@ -27,22 +27,31 @@ def _load_api_keys() -> list:
 GROQ_API_KEYS     = _load_api_keys()
 GROQ_API_KEY      = GROQ_API_KEYS[0] if GROQ_API_KEYS else ""  # backward compat
 
-GROQ_MODEL_FAST       = "llama-3.1-8b-instant"      # testcase extractor
-GROQ_MODEL_STRONG     = "llama-3.3-70b-versatile"   # description extractor
-GROQ_MODEL_COMPARATOR = "llama3-70b-8192" 
+# ── Dedicated key per agent ───────────────────────────────────────────────────
+# Each agent gets its own key so they never share a TPM bucket.
+# Falls back to sharing all keys if fewer than 3 keys are configured.
+def _agent_keys(idx: int) -> list:
+    if len(GROQ_API_KEYS) > idx:
+        return [GROQ_API_KEYS[idx]]
+    return GROQ_API_KEYS
+
+GROQ_API_KEYS_FAST       = _agent_keys(0)   # Key 1 → testcase extractor
+GROQ_API_KEYS_STRONG     = _agent_keys(1)   # Key 2 → description extractor
+GROQ_API_KEYS_COMPARATOR = _agent_keys(2)   # Key 3 → comparator
+
+# ── Models (same powerful model for all — each key has its own 12k TPM) ───────
+GROQ_MODEL_FAST       = "llama-3.3-70b-versatile"  # testcase extractor
+GROQ_MODEL_STRONG     = "llama-3.3-70b-versatile"  # description extractor
+GROQ_MODEL_COMPARATOR = "llama-3.3-70b-versatile"  # comparator
 
 # ── Token limits ──────────────────────────────────────────────────────────────
 MAX_TOKENS_FAST   = 2000
 MAX_TOKENS_STRONG = 8192
-
-# Groq on_demand tier: llama-3.3-70b-versatile hard cap = 12,000 tokens/request
-# (input + output combined).  Keep max_output low so input headroom is preserved.
-# Formula: estimated_input_tokens + MAX_TOKENS_COMPARATOR < 12_000
-MAX_TOKENS_COMPARATOR = 3500   # safe ceiling; keeps total well under 12 k
+MAX_TOKENS_COMPARATOR = 2000
 
 # How many testcases to send per comparator call.
 # Smaller batches = smaller prompts = fewer 413 errors when testcase lists grow.
-COMPARATOR_BATCH_SIZE = 10
+COMPARATOR_BATCH_SIZE = 5
 
 # ── Rate limiting ─────────────────────────────────────────────────────────────
 # Used only if all keys are exhausted
