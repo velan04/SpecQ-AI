@@ -5,6 +5,10 @@ Rotates through multiple Groq API keys automatically.
 When one key hits a 429 (rate limit), it switches to the next key instantly.
 No waiting — just switches keys.
 
+Handles two types of 429:
+  • TPM (per-minute) limit  — retry-after is short (< 120s); wait and retry.
+  • Daily (RPD) limit       — retry-after is long  (≥ 120s); skip key for session.
+
 Usage:
     from tools.key_rotator import KeyRotator
     rotator = KeyRotator()
@@ -12,10 +16,16 @@ Usage:
     rotator.mark_rate_limited()             # call on 429 → rotates to next key
 """
 import logging
+import re
 import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Retry-after values >= this threshold (seconds) are treated as daily/account
+# limits rather than per-minute TPM limits. The key is marked dead for the
+# session and skipped on all subsequent rotations.
+DAILY_LIMIT_THRESHOLD = 120
 
 
 class KeyRotator:
@@ -23,6 +33,7 @@ class KeyRotator:
     Manages a pool of Groq API keys.
     Rotates to the next key on rate limit (429).
     Falls back to waiting only when ALL keys are exhausted.
+    Respects the Groq retry-after header to distinguish TPM vs daily limits.
     """
 
     def __init__(self, api_keys: list, model: str, max_tokens: int = 8192, temperature: float = 0):
@@ -35,8 +46,11 @@ class KeyRotator:
         self.temperature = temperature
         self.current_idx = 0
 
-        # Track when each key was rate-limited (Unix timestamp)
-        self.rate_limited_at: dict = {}
+        # key_idx → Unix timestamp when the key becomes available again
+        self.retry_after_until: dict[int, float] = {}
+
+        # key indices permanently skipped this session (daily limit hit)
+        self.session_dead: set[int] = set()
 
         logger.info(
             "KeyRotator initialised with %d key(s) for model: %s",
@@ -61,21 +75,39 @@ class KeyRotator:
         """
         Invoke the LLM with automatic key rotation on 429.
         Tries every available key before falling back to waiting.
+        Daily-limited keys (retry-after >= 120s) are skipped for the session.
         """
-        attempted = set()
+        attempted: set[int] = set()
 
         while True:
-            key_idx = self.current_idx
-            if key_idx in attempted and len(attempted) >= len(self.api_keys):
-                # All keys exhausted — wait for the earliest one to reset
-                wait = self._wait_for_reset()
-                logger.info("All %d keys rate-limited. Waiting %ds...", len(self.api_keys), wait)
+            # Find a usable key (not session-dead, not currently TPM-limited)
+            key_idx = self._pick_available_key(attempted)
+
+            if key_idx is None:
+                # All live keys attempted in this round — check if any TPM keys
+                # will reset soon enough to be worth waiting for.
+                wait = self._wait_for_tpm_reset()
+                if wait is None:
+                    # No TPM keys either — only daily-dead keys remain.
+                    raise RuntimeError(
+                        "All Groq API keys have hit their daily rate limit. "
+                        "Add more keys (GROQ_API_KEY_N) or wait until tomorrow."
+                    )
+                logger.info(
+                    "All %d key(s) TPM rate-limited. Waiting %ds for reset...",
+                    len(self.api_keys), wait,
+                )
                 time.sleep(wait)
-                self.rate_limited_at.clear()
-                self.current_idx = 0
+                # Clear TPM limits that have expired; leave session_dead intact.
+                now = time.time()
+                self.retry_after_until = {
+                    k: v for k, v in self.retry_after_until.items() if v > now
+                }
                 attempted.clear()
+                self.current_idx = 0
                 continue
 
+            self.current_idx = key_idx
             attempted.add(key_idx)
 
             try:
@@ -92,9 +124,11 @@ class KeyRotator:
                         f"Reduce max_tokens in settings.py. Error: {e}"
                     )
                 elif "429" in err_str or "rate_limit" in err_str.lower():
-                    self._rotate()
+                    retry_after = self._parse_retry_after(e)
+                    self._handle_rate_limit(key_idx, retry_after)
                 elif "401" in err_str or "invalid_api_key" in err_str.lower():
-                    self._rotate()
+                    self.session_dead.add(key_idx)
+                    logger.warning("Key %d/%d is invalid — skipping for session.", key_idx + 1, len(self.api_keys))
                 else:
                     raise
 
@@ -103,20 +137,89 @@ class KeyRotator:
     def _active_key(self) -> str:
         return self.api_keys[self.current_idx]
 
-    def _rotate(self):
-        """Mark current key as rate-limited and move to next."""
-        self.rate_limited_at[self.current_idx] = time.time()
-        self.current_idx = (self.current_idx + 1) % len(self.api_keys)
-        logger.info(
-            "Rotated to key %d/%d.",
-            self.current_idx + 1, len(self.api_keys)
-        )
-
-    def _wait_for_reset(self) -> int:
-        """Return seconds to wait for the earliest rate-limited key to reset (60s window)."""
+    def _pick_available_key(self, attempted: set[int]) -> Optional[int]:
+        """
+        Find the next key index that is:
+          • not session-dead
+          • not already attempted this round
+          • not currently TPM-rate-limited (or its window has expired)
+        Returns None if no such key exists.
+        """
         now = time.time()
-        reset_times = [
-            max(0, 60 - (now - ts))
-            for ts in self.rate_limited_at.values()
+        n   = len(self.api_keys)
+        for offset in range(n):
+            idx = (self.current_idx + offset) % n
+            if idx in self.session_dead:
+                continue
+            if idx in attempted:
+                continue
+            # If it was TPM-limited, check if window expired
+            if idx in self.retry_after_until and self.retry_after_until[idx] > now:
+                continue
+            return idx
+        return None
+
+    def _handle_rate_limit(self, key_idx: int, retry_after: int):
+        """
+        React to a 429 on key_idx.
+        • retry_after >= DAILY_LIMIT_THRESHOLD → mark session-dead, skip forever.
+        • retry_after < threshold              → mark TPM-limited, rotate.
+        """
+        if retry_after >= DAILY_LIMIT_THRESHOLD:
+            self.session_dead.add(key_idx)
+            logger.warning(
+                "Key %d/%d hit DAILY rate limit (retry-after %ds ≥ %ds threshold). "
+                "Marking dead for this session.",
+                key_idx + 1, len(self.api_keys), retry_after, DAILY_LIMIT_THRESHOLD,
+            )
+        else:
+            reset_at = time.time() + max(retry_after, 60) + 2
+            self.retry_after_until[key_idx] = reset_at
+            next_idx = (key_idx + 1) % len(self.api_keys)
+            self.current_idx = next_idx
+            logger.info(
+                "Key %d/%d TPM rate-limited (retry-after %ds). Rotated to key %d/%d.",
+                key_idx + 1, len(self.api_keys), retry_after,
+                next_idx + 1, len(self.api_keys),
+            )
+
+    def _parse_retry_after(self, exc: Exception) -> int:
+        """
+        Extract the retry-after value (seconds) from a Groq 429 exception.
+        Falls back to 60 if not parseable.
+        """
+        # groq SDK exposes response headers on RateLimitError
+        try:
+            headers = exc.response.headers  # type: ignore[attr-defined]
+            val = headers.get("retry-after") or headers.get("x-ratelimit-reset-requests")
+            if val:
+                return int(float(val))
+        except Exception:
+            pass
+
+        # Fall back: scan the error string for "retry-after: NNN" or similar
+        err_str = str(exc)
+        for pattern in (
+            r"retry.after['\"]?\s*[=:]\s*(\d+)",
+            r"retry_after['\"]?\s*[=:]\s*(\d+)",
+            r"'retry-after':\s*'(\d+)'",
+        ):
+            m = re.search(pattern, err_str, re.IGNORECASE)
+            if m:
+                return int(m.group(1))
+
+        return 60  # safe default (TPM-style wait)
+
+    def _wait_for_tpm_reset(self) -> Optional[int]:
+        """
+        Return seconds until the soonest TPM-limited (non-dead) key resets.
+        Returns None if there are no TPM-limited keys (only dead keys remain).
+        """
+        now  = time.time()
+        live = [
+            v for k, v in self.retry_after_until.items()
+            if k not in self.session_dead
         ]
-        return int(min(reset_times)) + 2 if reset_times else 65
+        if not live:
+            return None
+        return int(min(live) - now) + 1

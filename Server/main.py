@@ -140,6 +140,14 @@ def node_ocr_extract(state: PipelineState) -> PipelineState:
     b64_text = extract_base64_images_from_text(description_content)
     if b64_text:
         logger.info("Base64 OCR: extracted %d chars from embedded images.", len(b64_text))
+        # Append OCR text to description.txt so it's available for inspection
+        try:
+            desc_path = state.get("description_path", "data/description.txt")
+            with open(desc_path, "a", encoding="utf-8") as f:
+                f.write(f"\n\n<!-- OCR_EXTRACTED_TEXT -->\n{b64_text}\n<!-- /OCR_EXTRACTED_TEXT -->")
+            logger.info("OCR text appended to %s", desc_path)
+        except Exception as e:
+            logger.warning("Could not append OCR text to description file: %s", e)
     else:
         logger.info("No base64 images found in description text.")
 
@@ -155,6 +163,14 @@ def node_extract_testcases(state: PipelineState) -> PipelineState:
         agent  = TestcaseExtractorAgent()
         raw    = agent.extract(state["testcase_content"])
         normed = normalize_testcase_requirements(raw)
+        # Append extracted testcase requirements JSON to testcase.js
+        try:
+            tc_path = state.get("testcase_path", "data/testcase.js")
+            with open(tc_path, "a", encoding="utf-8") as f:
+                f.write(f"\n\n/* EXTRACTED_TESTCASE_REQUIREMENTS\n{json.dumps(normed, indent=2)}\n*/")
+            logger.info("Extracted testcase requirements appended to %s", tc_path)
+        except Exception as e:
+            logger.warning("Could not append testcase requirements to testcase file: %s", e)
         return {**state, "raw_testcase_reqs": raw, "testcase_reqs": normed}
     except Exception as e:
         logger.error("extract_testcases failed: %s", e)
@@ -174,6 +190,14 @@ def node_extract_description(state: PipelineState) -> PipelineState:
             state.get("ocr_text", ""),
         )
         normed = normalize_description_requirements(raw)
+        # Append extracted description requirements to description.txt
+        try:
+            desc_path = state.get("description_path", "data/description.txt")
+            with open(desc_path, "a", encoding="utf-8") as f:
+                f.write(f"\n\n<!-- EXTRACTED_DESCRIPTION_REQUIREMENTS\n{json.dumps(normed, indent=2)}\n-->")
+            logger.info("Extracted description requirements appended to %s", desc_path)
+        except Exception as e:
+            logger.warning("Could not append description requirements to description file: %s", e)
         return {**state, "raw_desc_reqs": raw, "desc_reqs": normed}
     except Exception as e:
         logger.error("extract_description failed: %s", e)

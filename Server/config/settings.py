@@ -29,15 +29,26 @@ GROQ_API_KEY      = GROQ_API_KEYS[0] if GROQ_API_KEYS else ""  # backward compat
 
 # ── Dedicated key per agent ───────────────────────────────────────────────────
 # Each agent gets its own key so they never share a TPM bucket.
-# Falls back to sharing all keys if fewer than 3 keys are configured.
+# Falls back to sharing all keys if fewer keys are configured.
 def _agent_keys(idx: int) -> list:
     if len(GROQ_API_KEYS) > idx:
         return [GROQ_API_KEYS[idx]]
     return GROQ_API_KEYS
 
-GROQ_API_KEYS_FAST       = _agent_keys(0)   # Key 1 → testcase extractor
-GROQ_API_KEYS_STRONG     = _agent_keys(1)   # Key 2 → description extractor
-GROQ_API_KEYS_COMPARATOR = _agent_keys(2)   # Key 3 → comparator
+def _agent_keys_pick(*indices) -> list:
+    """Return keys at the given indices. Skips missing indices gracefully."""
+    keys = [GROQ_API_KEYS[i] for i in indices if i < len(GROQ_API_KEYS)]
+    return keys if keys else GROQ_API_KEYS
+
+def _agent_keys_range(start: int, end: int) -> list:
+    """Return a slice of keys from start to end index (inclusive).
+    Used to give the comparator 2 keys so it can rotate between batches."""
+    keys = [GROQ_API_KEYS[i] for i in range(start, min(end + 1, len(GROQ_API_KEYS)))]
+    return keys if keys else GROQ_API_KEYS
+
+GROQ_API_KEYS_FAST       = _agent_keys(0)          # Key 1 → testcase extractor
+GROQ_API_KEYS_STRONG     = _agent_keys_pick(1, 4)  # Key 2 + Key 5 → description extractor
+GROQ_API_KEYS_COMPARATOR = _agent_keys_range(2, 3) # Key 3 + Key 4 → comparator (2 batches)
 
 # ── Models (same powerful model for all — each key has its own 12k TPM) ───────
 GROQ_MODEL_FAST       = "llama-3.3-70b-versatile"  # testcase extractor
