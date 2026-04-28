@@ -2,7 +2,7 @@
 import React from 'react';
 import './LoaderOverlay.css';
 
-const LoaderOverlay = ({ visible }) => {
+const LoaderOverlay = ({ visible, onCancel }) => {
   if (!visible) return null;
 
   return (
@@ -84,6 +84,37 @@ const LoaderOverlay = ({ visible }) => {
             />
           ))}
         </div>
+
+        {/* Cancel button */}
+        {onCancel && (
+          <button
+            onClick={onCancel}
+            style={{
+              marginTop:    '24px',
+              padding:      '9px 24px',
+              borderRadius: '8px',
+              border:       '1px solid rgba(239,68,68,0.4)',
+              background:   'rgba(239,68,68,0.12)',
+              color:        '#F87171',
+              cursor:       'pointer',
+              fontSize:     '13px',
+              fontWeight:   '600',
+              fontFamily:   "'DM Sans', sans-serif",
+              letterSpacing:'0.02em',
+              transition:   'all 0.15s',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.background = 'rgba(239,68,68,0.25)';
+              e.currentTarget.style.borderColor = 'rgba(239,68,68,0.7)';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.background = 'rgba(239,68,68,0.12)';
+              e.currentTarget.style.borderColor = 'rgba(239,68,68,0.4)';
+            }}
+          >
+            ✕ Cancel Pipeline
+          </button>
+        )}
       </div>
     </div>
   );

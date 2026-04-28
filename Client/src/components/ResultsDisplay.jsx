@@ -1,694 +1,608 @@
 // src/components/ResultsDisplay.jsx
-// Adapted for FastAPI QC report format
-import React, { useState, useEffect } from 'react';
-import {
-  CheckCircle2, XCircle, AlertTriangle, FileText,
-  ChevronDown, ChevronUp, Download, Star,
-  CheckSquare, Zap, ListChecks, Search, Hash
-} from 'lucide-react';
+// Displays the new QC report format:
+// { summary: {total,passed,failed,pass_rate},
+//   test_results: [{id,name,status,error_message}],
+//   failure_analysis: [{id,name,category,description_gap,description_gap_detail,
+//                        implementation_detail,code_snippet}] }
+import React, { useState } from 'react';
+import { CheckCircle2, XCircle, AlertTriangle, ChevronDown, ChevronUp, Code } from 'lucide-react';
 
-// ─── Theme Tokens ─────────────────────────────────────────────────────────────
-const theme = {
-  white:        '#ffffff',
-  surface:      '#f8f9ff',
-  surfaceAlt:   '#f1f3fc',
-  border:       '#e4e8f7',
-  borderStrong: '#c7cef0',
+// ─── Theme ────────────────────────────────────────────────────────────────────
+const th = {
+  white:   '#ffffff',
+  surface: '#f8f9ff',
+  border:  '#e4e8f7',
 
-  indigo50:     '#eef0fb',
-  indigo100:    '#dde2f7',
-  indigo200:    '#bbc5ef',
-  indigo400:    '#7b8fe0',
-  indigo500:    '#5b6fd4',
-  indigo600:    '#4355c8',
-  indigo700:    '#3344b2',
-  indigo900:    '#1e2a6e',
+  indigo50:  '#eef0fb',
+  indigo100: '#dde2f7',
+  indigo500: '#5b6fd4',
+  indigo600: '#4355c8',
+  indigo700: '#3344b2',
 
-  textPrimary:  '#1a1f3c',
-  textSecondary:'#4a5180',
-  textMuted:    '#8b91b8',
-  textTiny:     '#a0a6cc',
+  green50:  '#f0fdf6',
+  green200: '#a7f3ca',
+  green600: '#16a34a',
+  green700: '#15803d',
 
-  green50:      '#f0fdf6',
-  green200:     '#a7f3ca',
-  green600:     '#16a34a',
-  green700:     '#15803d',
+  red50:  '#fff1f2',
+  red200: '#fecdd3',
+  red600: '#dc2626',
+  red700: '#b91c1c',
 
-  amber50:      '#fffbeb',
-  amber200:     '#fde68a',
-  amber600:     '#d97706',
-  amber700:     '#b45309',
+  amber50:  '#fffbeb',
+  amber200: '#fde68a',
+  amber600: '#d97706',
+  amber700: '#b45309',
 
-  red50:        '#fff1f2',
-  red200:       '#fecdd3',
-  red600:       '#dc2626',
-  red700:       '#b91c1c',
+  textPrimary:   '#1a1f3c',
+  textSecondary: '#4a5180',
+  textMuted:     '#8b91b8',
+  textTiny:      '#a0a6cc',
 
-  shadowSm:     '0 1px 3px rgba(67,85,200,0.07), 0 1px 2px rgba(67,85,200,0.04)',
-  shadowMd:     '0 4px 16px rgba(67,85,200,0.10), 0 1px 4px rgba(67,85,200,0.06)',
-  shadowHero:   '0 8px 32px rgba(67,85,200,0.12), 0 2px 8px rgba(67,85,200,0.07)',
-
-  radiusSm:     '8px',
-  radiusMd:     '12px',
-  radiusLg:     '16px',
-  radiusPill:   '999px',
-  fontFamily:   "'DM Sans', 'Segoe UI', system-ui, sans-serif",
-  fontMono:     "'DM Mono', 'Fira Code', monospace",
-};
-
-// ─── Verdict config ───────────────────────────────────────────────────────────
-const verdictCfg = {
-  'PASS':                { color: theme.green600,  bg: theme.green50,  border: theme.green200,  icon: CheckCircle2  },
-  'PASS WITH WARNINGS':  { color: theme.amber600,  bg: theme.amber50,  border: theme.amber200,  icon: AlertTriangle },
-  'NEEDS IMPROVEMENT':   { color: theme.amber700,  bg: theme.amber50,  border: theme.amber200,  icon: AlertTriangle },
-  'FAIL':                { color: theme.red600,    bg: theme.red50,    border: theme.red200,    icon: XCircle       },
-};
-const getVerdictCfg = (v) => verdictCfg[v] || verdictCfg['FAIL'];
-
-// ─── Status config for per-testcase ──────────────────────────────────────────
-const statusCfg = {
-  covered:             { color: theme.green600,  bg: theme.green50,  border: theme.green200,  label: 'Covered',  icon: CheckCircle2 },
-  partial:             { color: theme.amber600,  bg: theme.amber50,  border: theme.amber200,  label: 'Partial',  icon: AlertTriangle },
-  not_in_description:  { color: theme.red600,    bg: theme.red50,    border: theme.red200,    label: 'Missing',  icon: XCircle       },
-};
-const getStatusCfg = (s) => statusCfg[s] || statusCfg.not_in_description;
-
-// ─── AIScoreRing ──────────────────────────────────────────────────────────────
-const AIScoreRing = ({ score }) => {
-  const [animated, setAnimated] = useState(0);
-  useEffect(() => {
-    const t = setTimeout(() => setAnimated(score), 120);
-    return () => clearTimeout(t);
-  }, [score]);
-
-  const r    = 54;
-  const circ = 2 * Math.PI * r;
-  const fill = (animated / 100) * circ;
-
-  const color   = score >= 90 ? theme.green600  : score >= 70 ? theme.amber600  : theme.red600;
-  const bgCol   = score >= 90 ? theme.green50   : score >= 70 ? theme.amber50   : theme.red50;
-  const ringBg  = score >= 90 ? theme.green200  : score >= 70 ? theme.amber200  : theme.red200;
-  const txtCol  = score >= 90 ? theme.green700  : score >= 70 ? theme.amber700  : theme.red700;
-  const label   = score >= 90 ? 'Excellent'     : score >= 70 ? 'Good'          : 'Needs Work';
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px' }}>
-      <div style={{ position: 'relative', width: '148px', height: '148px' }}>
-        <svg width="148" height="148" style={{ transform: 'rotate(-90deg)' }}>
-          <circle cx="74" cy="74" r={r} fill="none" stroke={ringBg} strokeWidth="10" />
-          <circle
-            cx="74" cy="74" r={r} fill="none" stroke={color} strokeWidth="10"
-            strokeDasharray={circ} strokeDashoffset={circ - fill} strokeLinecap="round"
-            style={{ transition: 'stroke-dashoffset 1.4s cubic-bezier(0.34, 1.56, 0.64, 1)' }}
-          />
-        </svg>
-        <div style={{
-          position: 'absolute', inset: 0,
-          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-          background: bgCol, borderRadius: '50%', margin: '16px',
-          boxShadow: `inset 0 2px 6px ${ringBg}`,
-        }}>
-          <span style={{ fontSize: '34px', fontWeight: '800', color: txtCol, lineHeight: 1, fontFamily: theme.fontFamily }}>{score}</span>
-          <span style={{ fontSize: '10px', color: txtCol, fontWeight: '600', opacity: 0.6, letterSpacing: '0.04em' }}>/ 100</span>
-        </div>
-      </div>
-      <span style={{
-        fontSize: '11px', fontWeight: '700', color: txtCol,
-        background: bgCol, padding: '4px 14px', borderRadius: theme.radiusPill,
-        border: `1.5px solid ${ringBg}`, letterSpacing: '0.04em', fontFamily: theme.fontFamily,
-      }}>
-        Quality Score · {label}
-      </span>
-    </div>
-  );
-};
-
-// ─── Section (collapsible) ────────────────────────────────────────────────────
-const Section = ({ title, icon, badge, borderColor = theme.border, accentColor = theme.indigo500, defaultOpen = false, children }) => {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div style={{
-      background: theme.white, borderRadius: theme.radiusMd,
-      border: `1.5px solid ${borderColor}`, overflow: 'hidden',
-      boxShadow: theme.shadowSm, fontFamily: theme.fontFamily,
-    }}>
-      <button
-        onClick={() => setOpen(!open)}
-        style={{
-          width: '100%', padding: '14px 20px',
-          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          background: 'none', border: 'none', cursor: 'pointer', transition: 'background 0.15s',
-        }}
-        onMouseEnter={e => e.currentTarget.style.background = theme.surface}
-        onMouseLeave={e => e.currentTarget.style.background = 'none'}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{
-            width: '32px', height: '32px', borderRadius: '9px',
-            background: `${accentColor}14`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-            border: `1px solid ${accentColor}22`,
-          }}>
-            {React.cloneElement(icon, { size: 15, color: accentColor })}
-          </div>
-          <span style={{ fontSize: '13px', fontWeight: '700', color: theme.textPrimary, letterSpacing: '-0.01em' }}>{title}</span>
-          {badge !== undefined && (
-            <span style={{
-              padding: '2px 10px', background: `${accentColor}10`, color: accentColor,
-              fontSize: '11px', fontWeight: '700', borderRadius: theme.radiusPill,
-              border: `1px solid ${accentColor}28`, letterSpacing: '0.02em',
-            }}>
-              {badge}
-            </span>
-          )}
-        </div>
-        <div style={{
-          width: '24px', height: '24px', borderRadius: '6px', background: theme.surfaceAlt,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-        }}>
-          {open ? <ChevronUp size={13} color={theme.textMuted} /> : <ChevronDown size={13} color={theme.textMuted} />}
-        </div>
-      </button>
-      {open && (
-        <div style={{ borderTop: `1px solid ${borderColor}`, padding: '16px 20px' }}>
-          {children}
-        </div>
-      )}
-    </div>
-  );
-};
-
-// ─── Chip ─────────────────────────────────────────────────────────────────────
-const Chip = ({ children, color, bg, border, mono }) => (
-  <span style={{
-    fontSize: '11px', padding: '3px 9px', borderRadius: '6px',
-    background: bg, border: `1px solid ${border}`, color,
-    fontFamily: mono ? theme.fontMono : theme.fontFamily,
-    lineHeight: '1.5', display: 'inline-block', whiteSpace: 'nowrap',
-    fontWeight: mono ? 500 : 600,
-  }}>
-    {children}
-  </span>
-);
-
-// ─── Per-Testcase Card ────────────────────────────────────────────────────────
-const TestCaseCard = ({ tc }) => {
-  const [open, setOpen] = useState(false);
-  const cfg = getStatusCfg(tc.status);
-  const StatusIcon = cfg.icon;
-
-  const hasMissing   = tc.missing_from_description?.length > 0;
-  const hasConflict  = tc.spec_conflict;
-  const hasMatched   = tc.matched_desc_ids?.length > 0;
-  const hasFound     = !!tc.found_in_description;
-  const hasDetails   = hasMissing || hasConflict || hasMatched || hasFound;
-
-  // Override colors if spec conflict
-  const borderCol = hasConflict  ? theme.red200   :
-                    tc.status === 'covered' ? theme.green200 :
-                    tc.status === 'partial' ? theme.amber200 :
-                                              theme.red200;
-  const bgCol     = hasConflict  ? '#fff5f5'  :
-                    tc.status === 'covered' ? '#f6fff9' :
-                    tc.status === 'partial' ? '#fffdf0' :
-                                              '#fff5f5';
-
-  return (
-    <div style={{
-      border: `1.5px solid ${borderCol}`, borderRadius: '10px',
-      overflow: 'hidden', background: bgCol, marginBottom: '8px',
-      fontFamily: theme.fontFamily, boxShadow: theme.shadowSm,
-    }}>
-      {/* Header row */}
-      <div
-        onClick={() => hasDetails && setOpen(!open)}
-        style={{
-          padding: '10px 14px',
-          display: 'flex', alignItems: 'center', gap: '10px',
-          cursor: hasDetails ? 'pointer' : 'default', flexWrap: 'wrap',
-        }}
-      >
-        <StatusIcon size={16} style={{ color: cfg.color, flexShrink: 0 }} />
-
-        {/* Status badge */}
-        <span style={{
-          fontSize: '10px', fontWeight: '700', padding: '2px 9px',
-          borderRadius: theme.radiusPill,
-          background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}`,
-          flexShrink: 0, textTransform: 'uppercase', letterSpacing: '0.05em',
-        }}>
-          {cfg.label}
-        </span>
-
-        {/* Spec conflict badge */}
-        {hasConflict && (
-          <span style={{
-            fontSize: '10px', fontWeight: '700', padding: '2px 9px',
-            borderRadius: theme.radiusPill,
-            background: theme.red50, color: theme.red700, border: `1px solid ${theme.red200}`,
-            flexShrink: 0,
-          }}>
-            ⚠ Spec Conflict
-          </span>
-        )}
-
-        {/* ID chip */}
-        <span style={{
-          fontSize: '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '5px',
-          background: theme.indigo50, color: theme.indigo500,
-          fontFamily: theme.fontMono, flexShrink: 0, border: `1px solid ${theme.indigo100}`,
-        }}>
-          {tc.id}
-        </span>
-
-        {/* Name */}
-        <span style={{ fontSize: '13px', fontWeight: '700', color: theme.textPrimary, flex: 1, minWidth: '120px', letterSpacing: '-0.01em' }}>
-          {tc.name}
-        </span>
-
-        {/* Missing count */}
-        {hasMissing && (
-          <span style={{
-            fontSize: '10px', fontWeight: '700', padding: '2px 9px',
-            borderRadius: theme.radiusPill,
-            background: theme.amber50, color: theme.amber700, border: `1px solid ${theme.amber200}`,
-            flexShrink: 0,
-          }}>
-            {tc.missing_from_description.length} missing
-          </span>
-        )}
-
-        {hasDetails && (
-          <div style={{
-            width: '22px', height: '22px', borderRadius: '6px', background: theme.surfaceAlt,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-          }}>
-            {open ? <ChevronUp size={12} color={theme.textMuted} /> : <ChevronDown size={12} color={theme.textMuted} />}
-          </div>
-        )}
-      </div>
-
-      {/* What it checks — always visible */}
-      {tc.what_testcase_checks && (
-        <div style={{ padding: '0 14px 10px 40px' }}>
-          <p style={{ fontSize: '12px', color: theme.textSecondary, margin: 0, lineHeight: '1.65', fontStyle: 'italic' }}>
-            {tc.what_testcase_checks}
-          </p>
-        </div>
-      )}
-
-      {/* Expanded detail */}
-      {open && (
-        <div style={{ padding: '14px', background: theme.white, borderTop: `1px solid ${borderCol}` }}>
-
-          {/* Conflict detail */}
-          {hasConflict && tc.conflict_detail && (
-            <div style={{ marginBottom: '12px' }}>
-              <p style={{ fontSize: '10px', fontWeight: '700', color: theme.red700, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                ⚠ Conflict Detail
-              </p>
-              <p style={{
-                fontSize: '12px', color: theme.red600,
-                padding: '8px 12px', background: theme.red50,
-                borderRadius: '6px', borderLeft: `3px solid ${theme.red200}`,
-                margin: 0, lineHeight: '1.55',
-              }}>
-                {tc.conflict_detail}
-              </p>
-            </div>
-          )}
-
-          {/* Found in description */}
-          {hasFound && !hasConflict && (
-            <div style={{ marginBottom: '12px' }}>
-              <p style={{ fontSize: '10px', fontWeight: '700', color: theme.green700, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                ✓ Found In Description
-              </p>
-              <p style={{
-                fontSize: '12px', color: theme.green700,
-                padding: '8px 12px', background: theme.green50,
-                borderRadius: '6px', borderLeft: `3px solid ${theme.green200}`,
-                margin: 0, lineHeight: '1.55',
-              }}>
-                {tc.found_in_description}
-              </p>
-            </div>
-          )}
-
-          {/* Missing from description */}
-          {hasMissing && (
-            <div style={{ marginBottom: '12px' }}>
-              <p style={{ fontSize: '10px', fontWeight: '700', color: theme.amber700, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                Missing From Description
-              </p>
-              {tc.missing_from_description.map((item, i) => (
-                <p key={i} style={{
-                  fontSize: '12px', color: theme.amber700,
-                  padding: '6px 10px', background: theme.amber50,
-                  borderRadius: '6px', borderLeft: `3px solid ${theme.amber200}`,
-                  margin: '0 0 4px', lineHeight: '1.55',
-                }}>
-                  {item}
-                </p>
-              ))}
-            </div>
-          )}
-
-          {/* Matched description IDs */}
-          {hasMatched && (
-            <div>
-              <p style={{ fontSize: '10px', fontWeight: '700', color: theme.textTiny, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <ListChecks size={10} /> Matched Requirements
-              </p>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                {tc.matched_desc_ids.map((id, i) => (
-                  <Chip key={i} mono color={theme.indigo600} bg={theme.indigo50} border={theme.indigo200}>{id}</Chip>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
+  shadowSm:  '0 1px 3px rgba(67,85,200,0.07)',
+  shadowMd:  '0 4px 16px rgba(67,85,200,0.10)',
+  radiusSm:  '8px',
+  radiusMd:  '12px',
+  radiusLg:  '16px',
+  radiusPill:'999px',
+  fontFamily:"'DM Sans','Segoe UI',system-ui,sans-serif",
+  fontMono:  "'DM Mono','Fira Code',monospace",
 };
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
 class QCErrorBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null }; }
-  static getDerivedStateFromError(error) { return { error }; }
+  static getDerivedStateFromError(e) { return { error: e }; }
   render() {
-    if (this.state.error) {
-      return (
-        <div style={{ padding: '16px', background: theme.red50, border: `1px solid ${theme.red200}`, borderRadius: '10px', fontFamily: theme.fontFamily }}>
-          <p style={{ color: theme.red700, fontWeight: '700', marginBottom: '4px', fontSize: '14px' }}>⚠ Render error</p>
-          <p style={{ color: theme.red600, fontSize: '13px', fontFamily: theme.fontMono }}>{String(this.state.error.message)}</p>
-        </div>
-      );
-    }
+    if (this.state.error) return (
+      <div style={{ padding: 16, background: th.red50, border: `1px solid ${th.red200}`, borderRadius: 10, fontFamily: th.fontFamily }}>
+        <p style={{ color: th.red700, fontWeight: 700, margin: '0 0 4px' }}>⚠ Render error</p>
+        <p style={{ color: th.red600, fontSize: 13, fontFamily: th.fontMono }}>{String(this.state.error.message)}</p>
+      </div>
+    );
     return this.props.children;
   }
 }
 
+// ─── Pass Rate Ring ───────────────────────────────────────────────────────────
+const PassRateRing = ({ rate }) => {
+  const [animated, setAnimated] = React.useState(0);
+  React.useEffect(() => { const t = setTimeout(() => setAnimated(rate), 120); return () => clearTimeout(t); }, [rate]);
+
+  const r    = 54;
+  const circ = 2 * Math.PI * r;
+  const fill = (animated / 100) * circ;
+  const color  = rate >= 80 ? th.green600 : rate >= 50 ? th.amber600 : th.red600;
+  const bgCol  = rate >= 80 ? th.green50  : rate >= 50 ? th.amber50  : th.red50;
+  const ringBg = rate >= 80 ? th.green200 : rate >= 50 ? th.amber200 : th.red200;
+  const txtCol = rate >= 80 ? th.green700 : rate >= 50 ? th.amber700 : th.red700;
+  const label  = rate >= 80 ? 'Great'     : rate >= 50 ? 'Partial'   : 'Needs Work';
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+      <div style={{ position: 'relative', width: 148, height: 148 }}>
+        <svg width="148" height="148" style={{ transform: 'rotate(-90deg)' }}>
+          <circle cx="74" cy="74" r={r} fill="none" stroke={ringBg} strokeWidth="10" />
+          <circle cx="74" cy="74" r={r} fill="none" stroke={color} strokeWidth="10"
+            strokeDasharray={circ} strokeDashoffset={circ - fill} strokeLinecap="round"
+            style={{ transition: 'stroke-dashoffset 1.4s cubic-bezier(0.34,1.56,0.64,1)' }} />
+        </svg>
+        <div style={{
+          position: 'absolute', inset: 0,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+          background: bgCol, borderRadius: '50%', margin: 16,
+        }}>
+          <span style={{ fontSize: 34, fontWeight: 800, color: txtCol, lineHeight: 1 }}>{rate}</span>
+          <span style={{ fontSize: 10, color: txtCol, fontWeight: 600, opacity: 0.6 }}>%</span>
+        </div>
+      </div>
+      <span style={{
+        fontSize: 11, fontWeight: 700, color: txtCol,
+        background: bgCol, padding: '4px 14px', borderRadius: th.radiusPill,
+        border: `1.5px solid ${ringBg}`, letterSpacing: '0.04em',
+      }}>
+        Pass Rate · {label}
+      </span>
+    </div>
+  );
+};
+
+// ─── Test Result Card ─────────────────────────────────────────────────────────
+const TestCard = ({ result, analysis }) => {
+  const [open, setOpen] = useState(false);
+  const isPass = result.status === 'PASS';
+
+  const borderCol = isPass ? th.green200 : th.red200;
+  const bgCol     = isPass ? '#f6fff9'   : '#fff5f5';
+  const StatusIcon = isPass ? CheckCircle2 : XCircle;
+  const iconColor  = isPass ? th.green600  : th.red600;
+
+  const category = analysis?.category || '';
+  const hasGap   = analysis?.description_gap;
+  const hasSnippet = !!analysis?.code_snippet;
+  const canExpand  = !isPass && (analysis?.implementation_detail || hasGap || hasSnippet);
+
+  return (
+    <div style={{
+      border: `1.5px solid ${borderCol}`, borderRadius: 10,
+      overflow: 'hidden', background: bgCol, marginBottom: 8,
+      fontFamily: th.fontFamily, boxShadow: th.shadowSm,
+    }}>
+      {/* Header row */}
+      <div
+        onClick={() => canExpand && setOpen(o => !o)}
+        style={{
+          padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10,
+          cursor: canExpand ? 'pointer' : 'default', flexWrap: 'wrap',
+        }}
+      >
+        <StatusIcon size={16} style={{ color: iconColor, flexShrink: 0 }} />
+
+        {/* Status badge */}
+        <span style={{
+          fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: th.radiusPill,
+          background: isPass ? th.green50 : th.red50,
+          color: isPass ? th.green600 : th.red600,
+          border: `1px solid ${isPass ? th.green200 : th.red200}`,
+          flexShrink: 0, textTransform: 'uppercase', letterSpacing: '0.05em',
+        }}>
+          {result.status}
+        </span>
+
+        {/* Description gap badge */}
+        {hasGap && (
+          <span style={{
+            fontSize: 10, fontWeight: 700, padding: '2px 9px', borderRadius: th.radiusPill,
+            background: th.amber50, color: th.amber700, border: `1px solid ${th.amber200}`,
+            flexShrink: 0,
+          }}>
+            ⚠ Description Gap
+          </span>
+        )}
+
+        {/* ID chip */}
+        <span style={{
+          fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 5,
+          background: th.indigo50, color: th.indigo500, fontFamily: th.fontMono,
+          flexShrink: 0, border: `1px solid ${th.indigo100}`,
+        }}>
+          {result.id}
+        </span>
+
+        {/* Name */}
+        <span style={{ fontSize: 13, fontWeight: 700, color: th.textPrimary, flex: 1, minWidth: 120, letterSpacing: '-0.01em' }}>
+          {result.name}
+        </span>
+
+        {canExpand && (
+          <div style={{
+            width: 22, height: 22, borderRadius: 6, background: '#f1f3fc',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+          }}>
+            {open ? <ChevronUp size={12} color={th.textMuted} /> : <ChevronDown size={12} color={th.textMuted} />}
+          </div>
+        )}
+      </div>
+
+      {/* Expanded failure details */}
+      {open && analysis && (
+        <div style={{ padding: 14, background: th.white, borderTop: `1px solid ${borderCol}` }}>
+
+          {/* Implementation detail */}
+          {analysis.implementation_detail && (
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ fontSize: 10, fontWeight: 700, color: th.red700, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                ❌ What Went Wrong
+              </p>
+              <p style={{
+                fontSize: 12, color: th.red600, padding: '8px 12px',
+                background: th.red50, borderRadius: 6, borderLeft: `3px solid ${th.red200}`,
+                margin: 0, lineHeight: 1.55,
+              }}>
+                {analysis.implementation_detail}
+              </p>
+            </div>
+          )}
+
+          {/* Description gap detail */}
+          {hasGap && analysis.description_gap_detail && (
+            <div style={{ marginBottom: 12 }}>
+              <p style={{ fontSize: 10, fontWeight: 700, color: th.amber700, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                ⚠ Missing From Description
+              </p>
+              <p style={{
+                fontSize: 12, color: th.amber700, padding: '8px 12px',
+                background: th.amber50, borderRadius: 6, borderLeft: `3px solid ${th.amber200}`,
+                margin: 0, lineHeight: 1.55,
+              }}>
+                {analysis.description_gap_detail}
+              </p>
+            </div>
+          )}
+
+          {/* Code snippet */}
+          {hasSnippet && (
+            <div>
+              <p style={{ fontSize: 10, fontWeight: 700, color: th.textMuted, margin: '0 0 6px', textTransform: 'uppercase', letterSpacing: '0.06em', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <Code size={10} /> Relevant Generated Code
+              </p>
+              <pre style={{
+                fontSize: 11, fontFamily: th.fontMono, background: '#0f0e26',
+                color: '#c8c3ff', padding: '10px 14px', borderRadius: 6,
+                overflowX: 'auto', margin: 0, lineHeight: 1.65, whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+              }}>
+                {analysis.code_snippet}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
 // ─── Main ResultsDisplay ──────────────────────────────────────────────────────
-/**
- * Props:
- *   report — raw FastAPI response:
- *   {
- *     meta: { generated_at, project, pipeline },
- *     summary: { total_testcases, total_desc_requirements, covered_in_description,
- *                partial_in_description, not_in_description, spec_conflicts,
- *                coverage_percent, quality_score, verdict },
- *     per_testcase: [ { id, name, status, spec_conflict, conflict_detail,
- *                       what_testcase_checks, found_in_description,
- *                       missing_from_description[], matched_desc_ids[] } ],
- *     spec_conflicts: [ { id, name, conflict_detail, what_testcase_checks } ],
- *     not_in_description: [ { id, name, what_testcase_checks, reason } ]
- *   }
- */
 const ResultsDisplay = ({ report }) => {
   if (!report) return null;
 
-  const { meta = {}, summary = {}, per_testcase = [], spec_conflicts = [], not_in_description = [] } = report;
+  const {
+    summary = {},
+    test_results = [],
+    failure_analysis = [],
+    raw_stdout = '',
+    raw_stderr = '',
+  } = report;
 
-  const verdict     = summary.verdict      || 'FAIL';
-  const qualScore   = Math.round(summary.quality_score    || 0);
-  const coverage    = Math.round(summary.coverage_percent || 0);
-  const vcfg        = getVerdictCfg(verdict);
-  const VerdictIcon = vcfg.icon;
-  const isPass      = verdict === 'PASS';
+  const total   = summary.total     ?? test_results.length;
+  const passed  = summary.passed    ?? test_results.filter(r => r.status === 'PASS').length;
+  const failed  = summary.failed    ?? test_results.filter(r => r.status === 'FAIL').length;
+  const rate    = typeof summary.pass_rate === 'number' ? Math.round(summary.pass_rate) : (total ? Math.round(passed / total * 100) : 0);
+  const allPass = failed === 0 && total > 0;
 
-  const downloadReport = () => {
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `qc-report-${Date.now()}.json`;
-    a.click();
-  };
+  // Build lookup: test id → failure analysis
+  const analysisMap = Object.fromEntries(failure_analysis.map(a => [a.id, a]));
+
+  const descGapCount = failure_analysis.filter(a => a.description_gap).length;
+
+  /* ── Empty state: test runner produced no results ──────────────────────── */
+  if (total === 0) {
+    return (
+      <QCErrorBoundary>
+        <div style={{
+          width: '100%', background: th.surface, borderRadius: 20,
+          padding: 20, fontFamily: th.fontFamily,
+        }}>
+          <div style={{
+            background: th.white, borderRadius: th.radiusLg,
+            border: `1.5px solid ${th.indigo100}`, boxShadow: th.shadowMd,
+            padding: '40px 32px', textAlign: 'center',
+          }}>
+            <div style={{
+              width: 64, height: 64, borderRadius: 16, margin: '0 auto 20px',
+              background: th.indigo50, border: `1.5px solid ${th.indigo100}`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <AlertTriangle size={28} style={{ color: th.indigo500 }} />
+            </div>
+            <h2 style={{ fontSize: 20, fontWeight: 800, color: th.textPrimary, margin: '0 0 8px', letterSpacing: '-0.02em' }}>
+              No Test Results Found
+            </h2>
+            <p style={{ fontSize: 13, color: th.textSecondary, margin: '0 0 24px', lineHeight: 1.6, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
+              The Puppeteer test runner completed but returned 0 results. This usually means one of the following:
+            </p>
+
+            {/* Cause list */}
+            <div style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto 28px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {[
+                { icon: '📦', title: 'puppeteer not installed', desc: 'Your ZIP must contain package.json. The runner will auto-run npm install — check the Live Logs for "npm install" output.' },
+                { icon: '📄', title: 'Wrong output format', desc: 'testcase.js must print: console.log(`TESTCASE:your_id:success`) or :failure for each test.' },
+                { icon: '🔗', title: 'URL not patched', desc: 'If no const/let/var url = "https://..." line is found, Puppeteer navigates to the wrong host. Check logs for "URL pattern not found" warning.' },
+                { icon: '⏱', title: 'Timeout / crash', desc: 'Node process may have crashed before printing anything. Check STDERR lines in the Live Logs.' },
+              ].map((c, i) => (
+                <div key={i} style={{
+                  display: 'flex', gap: 12, padding: '10px 14px',
+                  background: th.indigo50, borderRadius: th.radiusSm,
+                  border: `1px solid ${th.indigo100}`,
+                }}>
+                  <span style={{ fontSize: 18, flexShrink: 0 }}>{c.icon}</span>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: th.textPrimary, marginBottom: 2 }}>{c.title}</div>
+                    <div style={{ fontSize: 12, color: th.textSecondary, lineHeight: 1.5 }}>{c.desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Required format snippet */}
+            <div style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto 24px' }}>
+              <p style={{ fontSize: 11, fontWeight: 700, color: th.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                Required output format in testcase.js
+              </p>
+              <pre style={{
+                fontSize: 12, fontFamily: "'DM Mono','Fira Code',monospace",
+                background: '#0f0e26', color: '#c8c3ff', padding: '12px 16px',
+                borderRadius: th.radiusSm, margin: 0, lineHeight: 1.7, whiteSpace: 'pre-wrap',
+              }}>{`// Wrap each test in try/catch and print the result:
+try {
+  await page.waitForSelector('#my-element', {timeout: 5000});
+  console.log('TESTCASE:check_element:success');
+} catch (e) {
+  console.log('TESTCASE:check_element:failure');
+}`}</pre>
+            </div>
+
+            {/* Raw node output (if available) */}
+            {(raw_stderr || raw_stdout) && (
+              <div style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto' }}>
+                {raw_stderr && (
+                  <>
+                    <p style={{ fontSize: 11, fontWeight: 700, color: '#b91c1c', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                      ❌ Node.js stderr (error output)
+                    </p>
+                    <pre style={{
+                      fontSize: 11, fontFamily: "'DM Mono','Fira Code',monospace",
+                      background: '#1a0000', color: '#f87171', padding: '10px 14px',
+                      borderRadius: th.radiusSm, marginBottom: 14, lineHeight: 1.65,
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto',
+                    }}>{raw_stderr}</pre>
+                  </>
+                )}
+                {raw_stdout && (
+                  <>
+                    <p style={{ fontSize: 11, fontWeight: 700, color: th.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+                      📄 Node.js stdout (raw output)
+                    </p>
+                    <pre style={{
+                      fontSize: 11, fontFamily: "'DM Mono','Fira Code',monospace",
+                      background: '#0f0e26', color: '#c8c3ff', padding: '10px 14px',
+                      borderRadius: th.radiusSm, margin: 0, lineHeight: 1.65,
+                      whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto',
+                    }}>{raw_stdout}</pre>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </QCErrorBoundary>
+    );
+  }
 
   return (
     <QCErrorBoundary>
       <div style={{
-        width: '100%', display: 'flex', flexDirection: 'column', gap: '14px',
-        fontFamily: theme.fontFamily,
-        background: theme.surface, padding: '20px', borderRadius: '20px',
+        width: '100%', display: 'flex', flexDirection: 'column', gap: 14,
+        fontFamily: th.fontFamily, background: th.surface, padding: 20, borderRadius: 20,
       }}>
 
-        {/* ── Hero card ───────────────────────────────────────────────────── */}
+        {/* ── Hero card ──────────────────────────────────────────────────────── */}
         <div style={{
-          background: theme.white, borderRadius: theme.radiusLg,
-          border: `1.5px solid ${vcfg.border}`, boxShadow: theme.shadowHero, overflow: 'hidden',
+          background: th.white, borderRadius: th.radiusLg,
+          border: `1.5px solid ${allPass ? th.green200 : th.red200}`,
+          boxShadow: th.shadowMd, overflow: 'hidden',
         }}>
           {/* Header bar */}
           <div style={{
-            background: vcfg.bg, padding: '16px 24px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            flexWrap: 'wrap', gap: '12px',
-            borderBottom: `1px solid ${vcfg.border}`,
+            background: allPass ? th.green50 : th.red50,
+            padding: '16px 24px',
+            display: 'flex', alignItems: 'center', gap: 12,
+            borderBottom: `1px solid ${allPass ? th.green200 : th.red200}`,
+            flexWrap: 'wrap',
           }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{
-                width: '44px', height: '44px', borderRadius: '12px',
-                background: `${vcfg.color}18`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                border: `1.5px solid ${vcfg.color}28`,
-              }}>
-                <VerdictIcon size={22} style={{ color: vcfg.color }} />
-              </div>
-              <div>
-                <h2 style={{ fontSize: '22px', fontWeight: '800', color: vcfg.color, margin: 0, letterSpacing: '-0.03em' }}>
-                  {verdict}
-                </h2>
-                <p style={{ fontSize: '12px', color: theme.textMuted, margin: '2px 0 0', letterSpacing: '0.01em' }}>
-                  {meta.project || '—'} · {meta.pipeline || '—'} · {meta.generated_at ? new Date(meta.generated_at).toLocaleTimeString() : '—'}
-                </p>
-              </div>
+            <div style={{
+              width: 44, height: 44, borderRadius: 12,
+              background: allPass ? `${th.green600}18` : `${th.red600}18`,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              border: `1.5px solid ${allPass ? th.green200 : th.red200}`,
+            }}>
+              {allPass
+                ? <CheckCircle2 size={22} style={{ color: th.green600 }} />
+                : <XCircle      size={22} style={{ color: th.red600   }} />}
             </div>
-
-            <button
-              onClick={downloadReport}
-              style={{
-                display: 'flex', alignItems: 'center', gap: '7px', padding: '9px 18px',
-                background: theme.indigo600, color: '#fff',
-                border: 'none', borderRadius: theme.radiusSm, cursor: 'pointer',
-                fontSize: '12px', fontWeight: '700', fontFamily: theme.fontFamily,
-                letterSpacing: '0.02em', boxShadow: `0 2px 8px ${theme.indigo500}40`,
-                transition: 'background 0.15s',
-              }}
-              onMouseEnter={e => e.currentTarget.style.background = theme.indigo700}
-              onMouseLeave={e => e.currentTarget.style.background = theme.indigo600}
-            >
-              <Download size={13} /> Export JSON
-            </button>
+            <div>
+              <h2 style={{ fontSize: 22, fontWeight: 800, color: allPass ? th.green700 : th.red700, margin: 0, letterSpacing: '-0.03em' }}>
+                {allPass ? 'ALL TESTS PASSED' : `${failed} TEST${failed !== 1 ? 'S' : ''} FAILED`}
+              </h2>
+              <p style={{ fontSize: 12, color: th.textMuted, margin: '2px 0 0' }}>
+                AI-generated solution ran against Puppeteer testcase
+              </p>
+            </div>
           </div>
 
-          {/* Score + stats body */}
-          <div style={{ padding: '28px', display: 'flex', gap: '32px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          {/* Stats + ring */}
+          <div style={{ padding: 28, display: 'flex', gap: 32, alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flexShrink: 0 }}>
-              <AIScoreRing score={qualScore} />
+              <PassRateRing rate={rate} />
             </div>
 
-            <div style={{ flex: 1, minWidth: '200px', paddingTop: '6px' }}>
+            <div style={{ flex: 1, minWidth: 200, paddingTop: 6 }}>
               {/* Stats grid */}
-              <div style={{
-                display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(100px, 1fr))',
-                gap: '10px', marginBottom: '20px',
-              }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(90px,1fr))', gap: 10, marginBottom: 20 }}>
                 {[
-                  { v: summary.total_testcases,         label: 'Testcases',    color: theme.textPrimary },
-                  { v: summary.total_desc_requirements,  label: 'Requirements', color: theme.textPrimary },
-                  { v: summary.covered_in_description,   label: 'Covered',      color: theme.green600 },
-                  { v: summary.partial_in_description,   label: 'Partial',      color: theme.amber600 },
-                  { v: summary.not_in_description,       label: 'Missing',      color: theme.red600 },
-                  { v: summary.spec_conflicts,           label: 'Conflicts',    color: theme.red700 },
-                ].map((stat, i) => (
+                  { v: total,         label: 'Total',    color: th.textPrimary },
+                  { v: passed,        label: 'Passed',   color: th.green600 },
+                  { v: failed,        label: 'Failed',   color: th.red600 },
+                  { v: descGapCount,  label: 'Desc Gap', color: th.amber600 },
+                ].map((s, i) => (
                   <div key={i} style={{
-                    padding: '10px 14px',
-                    background: theme.surface,
-                    borderRadius: theme.radiusSm,
-                    border: `1px solid ${theme.border}`,
-                    textAlign: 'center',
+                    padding: '10px 14px', background: th.surface,
+                    borderRadius: th.radiusSm, border: `1px solid ${th.border}`, textAlign: 'center',
                   }}>
-                    <div style={{ fontSize: '24px', fontWeight: '900', color: stat.color, lineHeight: 1, letterSpacing: '-0.03em' }}>
-                      {stat.v ?? '—'}
-                    </div>
-                    <div style={{ fontSize: '10px', fontWeight: '700', color: theme.textTiny, textTransform: 'uppercase', letterSpacing: '0.07em', marginTop: '3px' }}>
-                      {stat.label}
-                    </div>
+                    <div style={{ fontSize: 24, fontWeight: 900, color: s.color, lineHeight: 1, letterSpacing: '-0.03em' }}>{s.v ?? '—'}</div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: th.textTiny, textTransform: 'uppercase', letterSpacing: '0.07em', marginTop: 3 }}>{s.label}</div>
                   </div>
                 ))}
               </div>
 
-              {/* Coverage bar */}
-              <div style={{ marginBottom: '14px' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '6px' }}>
-                  <span style={{ fontSize: '12px', fontWeight: '700', color: theme.textSecondary }}>Coverage</span>
-                  <span style={{ fontSize: '12px', fontWeight: '700', color: vcfg.color }}>{coverage}%</span>
+              {/* Pass rate bar */}
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: th.textSecondary }}>Pass Rate</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: allPass ? th.green600 : th.red600 }}>{rate}%</span>
                 </div>
-                <div style={{ height: '8px', background: theme.surfaceAlt, borderRadius: theme.radiusPill, overflow: 'hidden', border: `1px solid ${theme.border}` }}>
+                <div style={{ height: 8, background: '#f1f3fc', borderRadius: th.radiusPill, overflow: 'hidden', border: `1px solid ${th.border}` }}>
                   <div style={{
-                    height: '100%', borderRadius: theme.radiusPill,
-                    width: `${coverage}%`,
-                    background: isPass
-                      ? `linear-gradient(90deg, ${theme.green600}, #22c55e)`
-                      : `linear-gradient(90deg, ${vcfg.color}, ${theme.indigo400})`,
+                    height: '100%', borderRadius: th.radiusPill,
+                    width: `${rate}%`,
+                    background: allPass
+                      ? `linear-gradient(90deg,${th.green600},#22c55e)`
+                      : `linear-gradient(90deg,${th.red600},${th.amber600})`,
                     transition: 'width 0.9s cubic-bezier(0.34,1.56,0.64,1)',
                   }} />
                 </div>
               </div>
 
-              {/* Publish status */}
-              {isPass ? (
+              {/* Verdict message */}
+              {allPass ? (
                 <div style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '7px',
-                  padding: '7px 14px', borderRadius: theme.radiusSm,
-                  background: theme.green50, border: `1px solid ${theme.green200}`,
-                  fontSize: '13px', fontWeight: '700', color: theme.green700,
+                  display: 'inline-flex', alignItems: 'center', gap: 7,
+                  padding: '7px 14px', borderRadius: th.radiusSm,
+                  background: th.green50, border: `1px solid ${th.green200}`,
+                  fontSize: 13, fontWeight: 700, color: th.green700,
                 }}>
-                  ✅ All testcases covered by description
+                  ✅ AI solution passed all testcases
                 </div>
               ) : (
                 <div style={{
-                  display: 'inline-flex', alignItems: 'center', gap: '7px',
-                  padding: '7px 14px', borderRadius: theme.radiusSm,
-                  background: theme.red50, border: `1px solid ${theme.red200}`,
-                  fontSize: '13px', fontWeight: '700', color: theme.red700,
+                  display: 'inline-flex', alignItems: 'center', gap: 7,
+                  padding: '7px 14px', borderRadius: th.radiusSm,
+                  background: th.red50, border: `1px solid ${th.red200}`,
+                  fontSize: 13, fontWeight: 700, color: th.red700,
                 }}>
-                  🚫 Fix missing requirements before publishing
+                  🚫 {failed} test{failed !== 1 ? 's' : ''} failed — see details below
                 </div>
               )}
             </div>
           </div>
         </div>
 
-        {/* ── Spec Conflicts ───────────────────────────────────────────────── */}
-        {spec_conflicts.length > 0 && (
-          <Section
-            title="Spec Conflicts"
-            icon={<XCircle />}
-            badge={spec_conflicts.length}
-            borderColor={theme.red200}
-            accentColor={theme.red600}
-            defaultOpen={true}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-              {spec_conflicts.map((c, i) => (
-                <div key={i} style={{
-                  padding: '12px 14px',
-                  background: theme.red50, border: `1px solid ${theme.red200}`,
-                  borderRadius: theme.radiusSm, borderLeft: `3px solid ${theme.red600}`,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
-                    <span style={{
-                      fontSize: '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '5px',
-                      background: '#fff', color: theme.red600, border: `1px solid ${theme.red200}`,
-                      fontFamily: theme.fontMono,
-                    }}>
-                      {c.id}
-                    </span>
-                    <span style={{ fontSize: '12px', fontWeight: '700', color: theme.red700 }}>{c.name}</span>
-                  </div>
-                  <p style={{ fontSize: '12px', color: theme.red600, margin: '0 0 4px', lineHeight: '1.55' }}>
-                    <strong>Conflict:</strong> {c.conflict_detail}
-                  </p>
-                  <p style={{ fontSize: '11px', color: theme.textMuted, margin: 0, fontStyle: 'italic' }}>
-                    Checks: {c.what_testcase_checks}
-                  </p>
-                </div>
-              ))}
+        {/* ── Failed tests with analysis ────────────────────────────────────── */}
+        {failed > 0 && (
+          <div style={{
+            background: th.white, borderRadius: th.radiusMd,
+            border: `1.5px solid ${th.red200}`, overflow: 'hidden', boxShadow: th.shadowSm,
+          }}>
+            <div style={{
+              padding: '14px 20px', background: th.red50,
+              display: 'flex', alignItems: 'center', gap: 10,
+              borderBottom: `1px solid ${th.red200}`,
+            }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: 9, background: `${th.red600}14`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                border: `1px solid ${th.red200}`,
+              }}>
+                <XCircle size={15} style={{ color: th.red600 }} />
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 700, color: th.textPrimary }}>Failed Tests</span>
+              <span style={{
+                padding: '2px 10px', background: `${th.red600}10`, color: th.red600,
+                fontSize: 11, fontWeight: 700, borderRadius: th.radiusPill,
+                border: `1px solid ${th.red200}`,
+              }}>
+                {failed}
+              </span>
             </div>
-          </Section>
+            <div style={{ padding: 16 }}>
+              {test_results
+                .filter(r => r.status === 'FAIL')
+                .map((r, i) => (
+                  <TestCard key={r.id || i} result={r} analysis={analysisMap[r.id]} />
+                ))}
+            </div>
+          </div>
         )}
 
-        {/* ── Not In Description ───────────────────────────────────────────── */}
-        {not_in_description.length > 0 && (
-          <Section
-            title="Not In Description"
-            icon={<AlertTriangle />}
-            badge={not_in_description.length}
-            borderColor={theme.indigo200}
-            accentColor={theme.indigo500}
-            defaultOpen={true}
-          >
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '4px' }}>
-              {not_in_description.map((item, i) => (
-                <div key={i} style={{
-                  display: 'flex', alignItems: 'flex-start', gap: '10px',
-                  padding: '10px 14px',
-                  background: theme.indigo50, border: `1px solid ${theme.indigo200}`,
-                  borderRadius: theme.radiusSm, borderLeft: `3px solid ${theme.indigo500}`,
-                }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '7px', marginBottom: '4px', flexWrap: 'wrap' }}>
+        {/* ── Passed tests ─────────────────────────────────────────────────── */}
+        {passed > 0 && (
+          <div style={{
+            background: th.white, borderRadius: th.radiusMd,
+            border: `1.5px solid ${th.green200}`, overflow: 'hidden', boxShadow: th.shadowSm,
+          }}>
+            <div style={{
+              padding: '14px 20px', background: th.green50,
+              display: 'flex', alignItems: 'center', gap: 10,
+              borderBottom: `1px solid ${th.green200}`,
+            }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: 9, background: `${th.green600}14`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                border: `1px solid ${th.green200}`,
+              }}>
+                <CheckCircle2 size={15} style={{ color: th.green600 }} />
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 700, color: th.textPrimary }}>Passed Tests</span>
+              <span style={{
+                padding: '2px 10px', background: `${th.green600}10`, color: th.green600,
+                fontSize: 11, fontWeight: 700, borderRadius: th.radiusPill,
+                border: `1px solid ${th.green200}`,
+              }}>
+                {passed}
+              </span>
+            </div>
+            <div style={{ padding: 16 }}>
+              {test_results
+                .filter(r => r.status === 'PASS')
+                .map((r, i) => (
+                  <TestCard key={r.id || i} result={r} analysis={null} />
+                ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── Description gaps summary ──────────────────────────────────────── */}
+        {descGapCount > 0 && (
+          <div style={{
+            background: th.white, borderRadius: th.radiusMd,
+            border: `1.5px solid ${th.amber200}`, overflow: 'hidden', boxShadow: th.shadowSm,
+          }}>
+            <div style={{
+              padding: '14px 20px', background: th.amber50,
+              display: 'flex', alignItems: 'center', gap: 10,
+              borderBottom: `1px solid ${th.amber200}`,
+            }}>
+              <div style={{
+                width: 32, height: 32, borderRadius: 9, background: `${th.amber600}14`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                border: `1px solid ${th.amber200}`,
+              }}>
+                <AlertTriangle size={15} style={{ color: th.amber600 }} />
+              </div>
+              <span style={{ fontSize: 13, fontWeight: 700, color: th.textPrimary }}>Description Gaps</span>
+              <span style={{
+                padding: '2px 10px', background: `${th.amber600}10`, color: th.amber700,
+                fontSize: 11, fontWeight: 700, borderRadius: th.radiusPill,
+                border: `1px solid ${th.amber200}`,
+              }}>
+                {descGapCount} test{descGapCount !== 1 ? 's' : ''} failing because spec didn't mention it
+              </span>
+            </div>
+            <div style={{ padding: 16 }}>
+              {failure_analysis
+                .filter(a => a.description_gap)
+                .map((a, i) => (
+                  <div key={i} style={{
+                    padding: '10px 14px', marginBottom: 8,
+                    background: th.amber50, border: `1px solid ${th.amber200}`,
+                    borderRadius: th.radiusSm, borderLeft: `3px solid ${th.amber600}`,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
                       <span style={{
-                        fontSize: '10px', fontWeight: '600', padding: '2px 8px', borderRadius: '5px',
-                        background: '#fff', color: theme.indigo600, border: `1px solid ${theme.indigo200}`,
-                        fontFamily: theme.fontMono,
+                        fontSize: 10, fontWeight: 600, padding: '2px 8px', borderRadius: 5,
+                        background: '#fff', color: th.amber700, border: `1px solid ${th.amber200}`,
+                        fontFamily: th.fontMono,
                       }}>
-                        {item.id}
+                        {a.id}
                       </span>
-                      <span style={{ fontSize: '12px', fontWeight: '700', color: theme.indigo700 }}>{item.name}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: th.amber700 }}>{a.name}</span>
                     </div>
-                    <p style={{ fontSize: '12px', color: theme.indigo600, margin: 0, lineHeight: '1.55' }}>
-                      {item.what_testcase_checks}
+                    <p style={{ fontSize: 12, color: th.amber700, margin: 0, lineHeight: 1.55 }}>
+                      {a.description_gap_detail || 'This requirement was not specified in the description.'}
                     </p>
                   </div>
-                </div>
-              ))}
+                ))}
             </div>
-          </Section>
-        )}
-
-        {/* ── Per Testcase Coverage ────────────────────────────────────────── */}
-        {per_testcase.length > 0 && (
-          <Section
-            title="Per-Testcase Coverage"
-            icon={<CheckSquare />}
-            badge={`${summary.covered_in_description ?? 0} / ${summary.total_testcases ?? per_testcase.length} covered`}
-            borderColor={summary.covered_in_description < summary.total_testcases ? theme.amber200 : theme.green200}
-            accentColor={summary.covered_in_description < summary.total_testcases ? theme.amber600 : theme.green600}
-            defaultOpen={true}
-          >
-            {/* Summary bar */}
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '0',
-              padding: '16px 20px', marginBottom: '16px',
-              background: theme.surface, borderRadius: theme.radiusMd,
-              border: `1px solid ${theme.border}`, boxShadow: theme.shadowSm,
-            }}>
-              {[
-                { v: summary.total_testcases,        label: 'Total',    color: theme.textPrimary },
-                { v: summary.covered_in_description, label: 'Covered',  color: theme.green600 },
-                { v: summary.partial_in_description, label: 'Partial',  color: theme.amber600 },
-                { v: summary.not_in_description,     label: 'Missing',  color: theme.red600 },
-              ].map((s, i) => (
-                <React.Fragment key={i}>
-                  {i > 0 && <div style={{ width: '1px', height: '40px', background: theme.border, margin: '0 20px' }} />}
-                  <div style={{ textAlign: 'center', minWidth: '56px' }}>
-                    <div style={{ fontSize: '28px', fontWeight: '900', color: s.color, lineHeight: 1, letterSpacing: '-0.03em' }}>{s.v ?? 0}</div>
-                    <div style={{ fontSize: '10px', fontWeight: '700', color: theme.textTiny, textTransform: 'uppercase', letterSpacing: '0.07em', marginTop: '2px' }}>{s.label}</div>
-                  </div>
-                </React.Fragment>
-              ))}
-              <div style={{ flex: 1, marginLeft: '24px' }}>
-                <div style={{ height: '7px', background: theme.surfaceAlt, borderRadius: theme.radiusPill, overflow: 'hidden', border: `1px solid ${theme.border}` }}>
-                  <div style={{
-                    height: '100%', borderRadius: theme.radiusPill,
-                    width: `${summary.total_testcases > 0 ? (summary.covered_in_description / summary.total_testcases) * 100 : 0}%`,
-                    background: `linear-gradient(90deg, ${theme.indigo500}, ${theme.indigo400})`,
-                    transition: 'width 0.9s cubic-bezier(0.34,1.56,0.64,1)',
-                  }} />
-                </div>
-                <p style={{ fontSize: '11px', color: theme.textTiny, margin: '5px 0 0', textAlign: 'right', fontWeight: '600', letterSpacing: '0.02em' }}>
-                  {coverage}% coverage
-                </p>
-              </div>
-            </div>
-
-            {per_testcase.map((tc, i) => (
-              <TestCaseCard key={tc.id || i} tc={tc} />
-            ))}
-          </Section>
+          </div>
         )}
 
       </div>

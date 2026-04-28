@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import zipfile; z=zipfile.ZipFile\\(r'C:\\\\Users\\\\VelanV\\\\Downloads\\\\streamzip.zip'\\); [print\\(f.filename\\) for f in z.infolist\\(\\)]\")",
+      "Bash(python -c \"import zipfile; z=zipfile.ZipFile\\(r'C:\\\\Users\\\\VelanV\\\\Downloads\\\\streamzip.zip'\\); print\\(z.read\\('streamzip/package.json'\\).decode\\('utf-8'\\)\\)\")",
+      "Bash(python -c \"import zipfile; z=zipfile.ZipFile\\(r'C:\\\\Users\\\\VelanV\\\\Downloads\\\\streamzip.zip'\\); print\\(z.read\\('streamzip/puppeteer/test.js'\\).decode\\('utf-8'\\)\\)\")",
+      "Bash(python -c \"import zipfile; z=zipfile.ZipFile\\(r'C:\\\\Users\\\\VelanV\\\\Downloads\\\\streamzip.zip'\\); print\\(z.read\\('streamzip/public/script.js'\\).decode\\('utf-8'\\)\\)\")",
+      "Bash(python -c \"import zipfile; z=zipfile.ZipFile\\(r'C:\\\\Users\\\\VelanV\\\\Downloads\\\\streamzip.zip'\\); print\\(z.read\\('streamzip/public/script.js'\\).decode\\('utf-8', errors='replace'\\)\\)\")",
+      "Bash(python -c \"import zipfile; z=zipfile.ZipFile\\(r'C:\\\\Users\\\\VelanV\\\\Downloads\\\\streamzip.zip'\\); print\\(z.read\\('streamzip/public/index.html'\\).decode\\('utf-8'\\)\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(dir \"C:\\\\Users\\\\VelanV\\\\Downloads\\\\qc-automation \\(1\\)\\\\qc-automation\\\\Server\\\\data\\\\scaffolding\" /b)",
+      "Bash(npm install *)",
+      "Bash(node -e \"process.env.NODE_PATH='C:\\\\\\\\\\\\\\\\Users\\\\\\\\\\\\\\\\VelanV\\\\\\\\\\\\\\\\Downloads\\\\\\\\\\\\\\\\qc-automation \\(1\\)\\\\\\\\\\\\\\\\qc-automation\\\\\\\\\\\\\\\\Server\\\\\\\\\\\\\\\\data\\\\\\\\\\\\\\\\scaffolding\\\\\\\\\\\\\\\\node_modules'; require\\('module'\\).Module._initPaths\\(\\); const p = require\\('puppeteer'\\); console.log\\('puppeteer version:', p.default ? 'ok' : JSON.stringify\\(Object.keys\\(p\\)\\).slice\\(0,80\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; p=json.load\\(sys.stdin\\); print\\('version:', p.get\\('version'\\)\\); print\\('main:', p.get\\('main'\\)\\); print\\('exports:', list\\(p.get\\('exports',{}\\).keys\\(\\)\\)[:5] if p.get\\('exports'\\) else 'none'\\)\")",
+      "Bash(node -e \"const r = require\\('C:\\\\\\\\\\\\\\\\Users\\\\\\\\\\\\\\\\VelanV\\\\\\\\\\\\\\\\Downloads\\\\\\\\\\\\\\\\qc-automation \\(1\\)\\\\\\\\\\\\\\\\qc-automation\\\\\\\\\\\\\\\\Server\\\\\\\\\\\\\\\\data\\\\\\\\\\\\\\\\scaffolding\\\\\\\\\\\\\\\\node_modules\\\\\\\\\\\\\\\\puppeteer'\\); console.log\\('ok', Object.keys\\(r\\).slice\\(0,3\\)\\)\")",
+      "Bash(node -e \"const p = require\\('./node_modules/puppeteer'\\); console.log\\('puppeteer loaded ok, keys:', Object.keys\\(p\\).slice\\(0,4\\)\\)\")",
+      "Bash(node -e \"const p = require\\('C:/Users/VelanV/Downloads/qc-automation \\(1\\)/qc-automation/Server/data/scaffolding/node_modules/puppeteer'\\); console.log\\('✅ puppeteer loaded, keys:', Object.keys\\(p\\).slice\\(0,4\\)\\)\")",
+      "Bash(curl -s -X POST http://localhost:8000/api/cancel)",
+      "Bash(curl -s http://localhost:8000/api/status)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" --max-time 10 https://api.kimi.ai/v1/models)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" --max-time 10 https://api.moonshot.cn/v1/models)",
+      "Read(//c/Users/VelanV/AppData/Roaming/Claude/local-agent-mode-sessions/skills-plugin/99705e63-e209-4487-aac6-bcdb7f22cd14/01957d18-5733-4529-b879-e63ed6517903/skills/xlsx/**)",
+      "Bash(python scripts/recalc.py --help)",
+      "Bash(pip3 install *)",
+      "Bash(python3 -c \"import sys; print\\(sys.executable\\); print\\(sys.version\\)\")",
+      "Bash(pip install *)",
+      "Bash(python3 -m pip install openpyxl pandas)"
+    ]
+  }
+}

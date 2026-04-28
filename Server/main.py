@@ -6,25 +6,22 @@ LangGraph-orchestrated multi-agent pipeline:
   [START]
      │
      ▼
-  load_inputs          (reads testcase.js, description.txt)
+  load_inputs          (reads testcase.js, description.txt; prepares scaffolding/)
      │
      ▼
   ocr_extract          (optional — extracts base64 images from description)
      │
      ▼
-  extract_testcases    (Agent 2 — Testcase Requirement Extractor)
+  generate_solution    (Agent 1 — AI writes index.html, style.css, script.js)
      │
      ▼
-  extract_description  (Agent 3 — Description Requirement Extractor)
+  run_tests            (HTTP server + node testcase.js → PASS/FAIL per test)
      │
      ▼
-  compare              (Agent 4 — Semantic Comparator)
+  analyze_failures     (Agent 2 — root-cause analysis for each failed test)
      │
      ▼
-  analyze_coverage     (Agent 5 — Coverage Analyzer)
-     │
-     ▼
-  save_report          (writes reports/qc_report.json)
+  generate_excel_report (writes reports/qc_report.xlsx + reports/qc_report.json)
      │
      ▼
   [END]
@@ -33,8 +30,9 @@ LangGraph-orchestrated multi-agent pipeline:
 import json
 import logging
 import os
+import shutil
 import sys
-from typing import Any, Dict, TypedDict
+from typing import Any, Dict, List, TypedDict
 
 # ── LangGraph ─────────────────────────────────────────────────────────────────
 from langgraph.graph import StateGraph, END
@@ -43,22 +41,22 @@ from langgraph.graph import StateGraph, END
 from config.settings import (
     GROQ_API_KEY,
     OCR_ENABLED,
+    IMAGE_UPLOAD_ENABLED,
     TESTCASE_FILE,
     DESC_FILE,
-    REPORT_FILE,
+    EXCEL_REPORT_FILE,
+    SCAFFOLDING_DIR,
+    PUBLIC_DIR,
     VERBOSE,
 )
-from tools.parser_tool    import read_testcase, read_description
-from tools.ocr_tool       import extract_base64_images_from_text
-from tools.text_cleaner   import strip_base64_images
-from pipeline.normalizer  import (
-    normalize_testcase_requirements,
-    normalize_description_requirements,
-)
-from pipeline.coverage_analyzer import CoverageAnalyzer
-from agents.testcase_extractor_agent    import TestcaseExtractorAgent
-from agents.description_extractor_agent import DescriptionExtractorAgent
-from agents.comparator_agent            import ComparatorAgent
+from tools.parser_tool  import read_testcase, read_description
+from tools.ocr_tool     import extract_base64_images_from_text
+from tools.text_cleaner import strip_base64_images
+from tools.test_runner  import TestRunner
+from tools.excel_reporter import generate_excel_report
+from agents.solution_generator_agent  import SolutionGeneratorAgent
+from agents.failure_analyzer_agent    import FailureAnalyzerAgent
+from agents.description_scorer_agent  import DescriptionScorerAgent
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -74,32 +72,37 @@ logger = logging.getLogger("qc_pipeline")
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PipelineState(TypedDict, total=False):
-    # ── Path hints (passed in initial state) ──────────────────────────────────
-    testcase_path:        str
-    description_path:     str
-    report_path:          str
+    # ── Path hints ────────────────────────────────────────────────────────────
+    testcase_path:       str
+    description_path:    str
+    scaffolding_dir:     str
+    report_path:         str
 
     # ── Raw inputs ────────────────────────────────────────────────────────────
-    testcase_content:     str
-    description_content:  str
-    ocr_text:             str
+    testcase_content:    str
+    description_content: str
+    ocr_text:            str
+    image_urls:          List[str]   # pre-signed S3 URLs of description images
 
-    # ── Extracted (raw from LLM) ──────────────────────────────────────────────
-    raw_testcase_reqs:    Dict[str, Any]
-    raw_desc_reqs:        Dict[str, Any]
+    # ── Generated solution ────────────────────────────────────────────────────
+    generated_files:     Dict[str, str]   # {index.html, style.css, script.js}
 
-    # ── Normalised ────────────────────────────────────────────────────────────
-    testcase_reqs:        Dict[str, Any]
-    desc_reqs:            Dict[str, Any]
+    # ── Test execution results ────────────────────────────────────────────────
+    test_results:        List[Dict]        # [{id, name, status, error_message}, ...]
+    test_summary:        Dict              # {total, passed, failed, pass_rate}
 
-    # ── Comparator output ─────────────────────────────────────────────────────
-    comparator_result:    Dict[str, Any]
+    # ── Failure analysis ──────────────────────────────────────────────────────
+    failure_analysis:    List[Dict]        # [{id, category, description_gap, ...}, ...]
 
-    # ── Final report ──────────────────────────────────────────────────────────
-    qc_report:            Dict[str, Any]
+    # ── Description quality score ─────────────────────────────────────────────
+    description_score:   Dict             # {p1_score, p2_score, ..., overall_grade, params}
+
+    # ── Raw test runner output (for debugging 0-result runs) ──────────────────
+    raw_stdout:          str
+    raw_stderr:          str
 
     # ── Error tracking ────────────────────────────────────────────────────────
-    error:                str
+    error:               str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -107,13 +110,31 @@ class PipelineState(TypedDict, total=False):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def node_load_inputs(state: PipelineState) -> PipelineState:
-    """Node 1 — Load testcase.js and description.txt from disk."""
+    """Node 1 — Load testcase.js and description.txt; prepare scaffolding folder."""
     logger.info("═══ Node: load_inputs ═══")
     try:
         tc_path   = state.get("testcase_path",    TESTCASE_FILE)
         desc_path = state.get("description_path", DESC_FILE)
-        logger.info("Loading testcase from: %s", tc_path)
+        scaf_dir  = state.get("scaffolding_dir",  SCAFFOLDING_DIR)
+        pub_dir   = os.path.join(scaf_dir, "public")
+
+        logger.info("Loading testcase from:    %s", tc_path)
         logger.info("Loading description from: %s", desc_path)
+        logger.info("Scaffolding dir:          %s", scaf_dir)
+
+        # Ensure scaffolding/public/ exists with empty placeholder files
+        os.makedirs(pub_dir, exist_ok=True)
+        for fname in ("index.html", "style.css", "script.js"):
+            fpath = os.path.join(pub_dir, fname)
+            if not os.path.exists(fpath):
+                open(fpath, "w").close()
+
+        # Copy testcase.js into scaffolding dir (so Node can require puppeteer)
+        scaf_tc = os.path.join(scaf_dir, "testcase.js")
+        if os.path.abspath(tc_path) != os.path.abspath(scaf_tc):
+            shutil.copy2(tc_path, scaf_tc)
+            logger.info("Copied testcase.js → %s", scaf_tc)
+
         return {
             **state,
             "testcase_content":    read_testcase(tc_path),
@@ -125,144 +146,215 @@ def node_load_inputs(state: PipelineState) -> PipelineState:
 
 
 def node_ocr_extract(state: PipelineState) -> PipelineState:
-    """Node 1b — OCR extraction from base64 images embedded in description."""
+    """Node 2 — OCR text extraction + S3 image upload for vision LLM."""
     logger.info("═══ Node: ocr_extract ═══")
     if state.get("error"):
         return state
-    if not OCR_ENABLED:
-        logger.info("OCR disabled — skipping.")
-        return {**state, "ocr_text": ""}
 
     description_content = state.get("description_content", "")
     if not description_content:
-        return {**state, "ocr_text": ""}
+        return {**state, "ocr_text": "", "image_urls": []}
 
-    b64_text = extract_base64_images_from_text(description_content)
-    if b64_text:
-        logger.info("Base64 OCR: extracted %d chars from embedded images.", len(b64_text))
-        # Append OCR text to description.txt so it's available for inspection
-        try:
-            desc_path = state.get("description_path", "data/description.txt")
-            with open(desc_path, "a", encoding="utf-8") as f:
-                f.write(f"\n\n<!-- OCR_EXTRACTED_TEXT -->\n{b64_text}\n<!-- /OCR_EXTRACTED_TEXT -->")
-            logger.info("OCR text appended to %s", desc_path)
-        except Exception as e:
-            logger.warning("Could not append OCR text to description file: %s", e)
+    # ── OCR (kept as supplementary text context for the LLM) ─────────────────
+    b64_text = ""
+    if OCR_ENABLED:
+        b64_text = extract_base64_images_from_text(description_content)
+        if b64_text:
+            logger.info("OCR: extracted %d chars from embedded images.", len(b64_text))
+        else:
+            logger.info("No base64 images found in description.")
     else:
-        logger.info("No base64 images found in description text.")
+        logger.info("OCR disabled — skipping.")
 
-    return {**state, "ocr_text": b64_text}
+    # ── S3 upload (passes pre-signed URLs to vision LLM) ─────────────────────
+    image_urls: List[str] = []
+    if IMAGE_UPLOAD_ENABLED:
+        from tools.image_store import upload_images
+        image_urls = upload_images(description_content)
+        logger.info("S3: uploaded %d image(s) for vision LLM.", len(image_urls))
+    else:
+        logger.info("S3 upload disabled (IMAGE_UPLOAD_ENABLED=false) — base64 fallback will be used.")
+
+    return {**state, "ocr_text": b64_text, "image_urls": image_urls}
 
 
-def node_extract_testcases(state: PipelineState) -> PipelineState:
-    """Node 2 — Testcase Requirement Extractor Agent."""
-    logger.info("═══ Node: extract_testcases (Agent 2) ═══")
+def node_generate_solution(state: PipelineState) -> PipelineState:
+    """Node 3 — AI generates index.html, style.css, script.js from description."""
+    logger.info("═══ Node: generate_solution (Agent 1) ═══")
     if state.get("error"):
         return state
     try:
-        agent  = TestcaseExtractorAgent()
-        raw    = agent.extract(state["testcase_content"])
-        normed = normalize_testcase_requirements(raw)
-        # Append extracted testcase requirements JSON to testcase.js
-        try:
-            tc_path = state.get("testcase_path", "data/testcase.js")
-            with open(tc_path, "a", encoding="utf-8") as f:
-                f.write(f"\n\n/* EXTRACTED_TESTCASE_REQUIREMENTS\n{json.dumps(normed, indent=2)}\n*/")
-            logger.info("Extracted testcase requirements appended to %s", tc_path)
-        except Exception as e:
-            logger.warning("Could not append testcase requirements to testcase file: %s", e)
-        return {**state, "raw_testcase_reqs": raw, "testcase_reqs": normed}
-    except Exception as e:
-        logger.error("extract_testcases failed: %s", e)
-        return {**state, "error": str(e)}
+        scaf_dir = state.get("scaffolding_dir", SCAFFOLDING_DIR)
+        pub_dir  = os.path.join(scaf_dir, "public")
 
-
-def node_extract_description(state: PipelineState) -> PipelineState:
-    """Node 3 — Description Requirement Extractor Agent."""
-    logger.info("═══ Node: extract_description (Agent 3) ═══")
-    if state.get("error"):
-        return state
-    try:
-        agent  = DescriptionExtractorAgent()
-        clean_description = strip_base64_images(state["description_content"])
-        raw    = agent.extract(
-            clean_description,
-            state.get("ocr_text", ""),
+        agent = SolutionGeneratorAgent()
+        files = agent.generate(
+            description_content = state["description_content"],
+            ocr_text            = state.get("ocr_text", ""),
+            testcase_content    = state["testcase_content"],
+            public_dir          = pub_dir,
+            image_urls          = state.get("image_urls", []),
         )
-        normed = normalize_description_requirements(raw)
-        # Append extracted description requirements to description.txt
-        try:
-            desc_path = state.get("description_path", "data/description.txt")
-            with open(desc_path, "a", encoding="utf-8") as f:
-                f.write(f"\n\n<!-- EXTRACTED_DESCRIPTION_REQUIREMENTS\n{json.dumps(normed, indent=2)}\n-->")
-            logger.info("Extracted description requirements appended to %s", desc_path)
-        except Exception as e:
-            logger.warning("Could not append description requirements to description file: %s", e)
-        return {**state, "raw_desc_reqs": raw, "desc_reqs": normed}
+        return {**state, "generated_files": files}
     except Exception as e:
-        logger.error("extract_description failed: %s", e)
+        logger.error("generate_solution failed: %s", e)
         return {**state, "error": str(e)}
 
 
-def node_compare(state: PipelineState) -> PipelineState:
-    """Node 4 — Semantic Comparator Agent."""
-    logger.info("═══ Node: compare (Agent 4) ═══")
+def node_run_tests(state: PipelineState) -> PipelineState:
+    """Node 4 — Run Puppeteer testcase against generated solution."""
+    logger.info("═══ Node: run_tests ═══")
     if state.get("error"):
         return state
     try:
-        agent  = ComparatorAgent()
-        result = agent.compare(state["testcase_reqs"], state["desc_reqs"])
-        return {**state, "comparator_result": result}
-    except Exception as e:
-        logger.error("compare failed: %s", e)
-        return {**state, "error": str(e)}
+        scaf_dir  = state.get("scaffolding_dir", SCAFFOLDING_DIR)
+        tc_path   = os.path.join(scaf_dir, "testcase.js")
 
+        runner  = TestRunner(scaffolding_dir=scaf_dir, testcase_path=tc_path)
+        outcome = runner.run()
 
-def node_analyze_coverage(state: PipelineState) -> PipelineState:
-    """Node 5 — Coverage Analyzer."""
-    logger.info("═══ Node: analyze_coverage (Agent 5) ═══")
-    if state.get("error"):
-        return state
-    try:
-        analyzer = CoverageAnalyzer()
-        report   = analyzer.analyze(
-            state["comparator_result"],
-            state["testcase_reqs"],
-            state["desc_reqs"],
+        summary = outcome["summary"]
+        logger.info(
+            "Tests complete — %d/%d passed (%.1f%%)",
+            summary["passed"], summary["total"], summary["pass_rate"],
         )
-        return {**state, "qc_report": report}
+
+        # When 0 results, surface the raw output prominently so user can diagnose
+        if summary["total"] == 0:
+            logger.warning(
+                "⚠ 0 test results parsed. Possible causes:\n"
+                "  1. puppeteer not in node_modules (check npm install above)\n"
+                "  2. testcase.js doesn't print TESTCASE:<id>:success/failure\n"
+                "  3. Node crashed — check STDERR above"
+            )
+
+        return {
+            **state,
+            "test_results":  outcome["results"],
+            "test_summary":  summary,
+            "raw_stdout":    outcome.get("raw_output", ""),
+            "raw_stderr":    outcome.get("raw_stderr", ""),
+        }
     except Exception as e:
-        logger.error("analyze_coverage failed: %s", e)
+        logger.error("run_tests failed: %s", e)
         return {**state, "error": str(e)}
 
 
-def node_save_report(state: PipelineState) -> PipelineState:
-    """Node 6 — Save QC report to disk."""
-    logger.info("═══ Node: save_report ═══")
+def node_analyze_failures(state: PipelineState) -> PipelineState:
+    """Node 5 — AI root-cause analysis for each failed test."""
+    logger.info("═══ Node: analyze_failures (Agent 2) ═══")
     if state.get("error"):
-        error_report = {"error": state["error"], "status": "PIPELINE_FAILED"}
-        report_path  = state.get("report_path", REPORT_FILE)
-        os.makedirs(os.path.dirname(report_path), exist_ok=True)
-        with open(report_path, "w") as f:
-            json.dump(error_report, f, indent=2)
-        logger.error("Pipeline failed. Error report saved.")
+        return state
+    try:
+        test_results = state.get("test_results", [])
+        failed       = [r for r in test_results if r["status"] == "FAIL"]
+
+        if not failed:
+            logger.info("All tests passed — skipping failure analysis.")
+            return {**state, "failure_analysis": []}
+
+        logger.info("Analyzing %d failure(s)…", len(failed))
+        agent    = FailureAnalyzerAgent()
+        analyses = agent.analyze(
+            failed_tests        = failed,
+            description_content = strip_base64_images(state["description_content"]),
+            generated_files     = state.get("generated_files", {}),
+            testcase_content    = state["testcase_content"],
+        )
+        return {**state, "failure_analysis": analyses}
+    except Exception as e:
+        logger.error("analyze_failures failed: %s", e)
+        return {**state, "error": str(e)}
+
+
+def node_score_description(state: PipelineState) -> PipelineState:
+    """Node 6 — AI scores the description on 4 QC parameters (1–5 each)."""
+    logger.info("═══ Node: score_description (Agent 3) ═══")
+    if state.get("error"):
+        return state
+    try:
+        agent  = DescriptionScorerAgent()
+        result = agent.score(state.get("description_content", ""))
+        logger.info(
+            "Description scored — Grade: %s  (P1:%d P2:%d P3:%d P4:%d)",
+            result["overall_grade"],
+            result["p1_score"], result["p2_score"],
+            result["p3_score"], result["p4_score"],
+        )
+        return {**state, "description_score": result}
+    except Exception as e:
+        logger.warning("score_description failed (non-fatal): %s", e)
+        return {**state, "description_score": {}}
+
+
+def node_generate_excel_report(state: PipelineState) -> PipelineState:
+    """Node 6 — Build Excel report and save JSON summary."""
+    logger.info("═══ Node: generate_excel_report ═══")
+
+    report_path = state.get("report_path", EXCEL_REPORT_FILE)
+
+    if state.get("error"):
+        # Save an error-only JSON so the API /report endpoint returns something
+        _save_json_summary(
+            {"error": state["error"], "status": "PIPELINE_FAILED"},
+            report_path,
+        )
+        logger.error("Pipeline failed — error report saved.")
         return state
 
-    report      = state.get("qc_report", {})
-    report_path = state.get("report_path", REPORT_FILE)
-    analyzer    = CoverageAnalyzer()
-    analyzer.save_report(report, report_path)
+    test_results     = state.get("test_results",    [])
+    test_summary     = state.get("test_summary",    {})
+    failure_analysis = state.get("failure_analysis", [])
 
-    summary = report.get("summary", {})
-    logger.info(
-        "✅ QC Report saved → %s\n"
-        "   Coverage: %.1f%% | Score: %.1f | Verdict: %s",
-        report_path,
-        summary.get("coverage_percent", 0),
-        summary.get("quality_score",    0),
-        summary.get("verdict", "N/A"),
+    # ── Excel ─────────────────────────────────────────────────────────────────
+    generate_excel_report(
+        test_results      = test_results,
+        test_summary      = test_summary,
+        failure_analysis  = failure_analysis,
+        report_path       = report_path,
+        description_score = state.get("description_score"),
     )
+
+    # ── JSON summary (for /api/report endpoint) ───────────────────────────────
+    json_report = {
+        "summary":            test_summary,
+        "test_results":       test_results,
+        "failure_analysis":   failure_analysis,
+        "description_score":  state.get("description_score", {}),
+    }
+    # Include raw node output when 0 tests parsed — helps user diagnose format issues
+    if test_summary.get("total", 0) == 0:
+        json_report["raw_stdout"] = state.get("raw_stdout", "")
+        json_report["raw_stderr"] = state.get("raw_stderr", "")
+    _save_json_summary(json_report, report_path)
+
+    logger.info(
+        "✅ QC Report saved → %s\n   Passed: %d/%d  (%.1f%%)",
+        report_path,
+        test_summary.get("passed", 0),
+        test_summary.get("total",  0),
+        test_summary.get("pass_rate", 0.0),
+    )
+
+    # ── S3 cleanup — delete uploaded images after pipeline completes ──────────
+    s3_urls = state.get("image_urls", [])
+    if s3_urls:
+        try:
+            from tools.image_store import delete_images
+            delete_images(s3_urls)
+            logger.info("S3 cleanup: deleted %d uploaded image(s).", len(s3_urls))
+        except Exception as _cleanup_err:
+            logger.warning("S3 cleanup failed (non-fatal): %s", _cleanup_err)
+
     return state
+
+
+def _save_json_summary(data: dict, excel_path: str) -> None:
+    """Write qc_report.json alongside the Excel file."""
+    json_path = excel_path.replace(".xlsx", ".json")
+    os.makedirs(os.path.dirname(os.path.abspath(json_path)), exist_ok=True)
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -270,25 +362,24 @@ def node_save_report(state: PipelineState) -> PipelineState:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def build_graph() -> StateGraph:
-    """Construct and compile the QC pipeline LangGraph."""
     graph = StateGraph(PipelineState)
 
-    graph.add_node("load_inputs",         node_load_inputs)
-    graph.add_node("ocr_extract",         node_ocr_extract)
-    graph.add_node("extract_testcases",   node_extract_testcases)
-    graph.add_node("extract_description", node_extract_description)
-    graph.add_node("compare",             node_compare)
-    graph.add_node("analyze_coverage",    node_analyze_coverage)
-    graph.add_node("save_report",         node_save_report)
+    graph.add_node("load_inputs",            node_load_inputs)
+    graph.add_node("ocr_extract",            node_ocr_extract)
+    graph.add_node("generate_solution",      node_generate_solution)
+    graph.add_node("run_tests",              node_run_tests)
+    graph.add_node("analyze_failures",       node_analyze_failures)
+    graph.add_node("score_description",      node_score_description)
+    graph.add_node("generate_excel_report",  node_generate_excel_report)
 
     graph.set_entry_point("load_inputs")
-    graph.add_edge("load_inputs",         "ocr_extract")
-    graph.add_edge("ocr_extract",         "extract_testcases")
-    graph.add_edge("extract_testcases",   "extract_description")
-    graph.add_edge("extract_description", "compare")
-    graph.add_edge("compare",             "analyze_coverage")
-    graph.add_edge("analyze_coverage",    "save_report")
-    graph.add_edge("save_report",         END)
+    graph.add_edge("load_inputs",           "ocr_extract")
+    graph.add_edge("ocr_extract",           "generate_solution")
+    graph.add_edge("generate_solution",     "run_tests")
+    graph.add_edge("run_tests",             "analyze_failures")
+    graph.add_edge("analyze_failures",      "score_description")
+    graph.add_edge("score_description",     "generate_excel_report")
+    graph.add_edge("generate_excel_report", END)
 
     return graph.compile()
 
@@ -300,7 +391,8 @@ def build_graph() -> StateGraph:
 def run_pipeline(
     testcase_path:    str = TESTCASE_FILE,
     description_path: str = DESC_FILE,
-    report_path:      str = REPORT_FILE,
+    scaffolding_dir:  str = SCAFFOLDING_DIR,
+    report_path:      str = EXCEL_REPORT_FILE,
     cancel_event=None,
 ) -> Dict[str, Any]:
     """
@@ -309,12 +401,12 @@ def run_pipeline(
     Args:
         testcase_path:    Path to testcase.js
         description_path: Path to description.txt
-        report_path:      Output path for qc_report.json
-        cancel_event:     Optional threading.Event; pipeline aborts between
-                          nodes when it is set (e.g. on client disconnect).
+        scaffolding_dir:  Path to scaffolding folder (contains public/ and package.json)
+        report_path:      Output path for qc_report.xlsx
+        cancel_event:     Optional threading.Event; set to abort between nodes.
 
     Returns:
-        Final pipeline state dict (includes qc_report)
+        Final pipeline state dict.
     """
     if not GROQ_API_KEY:
         logger.error("GROQ_API_KEY is not set. Add it to your .env file.")
@@ -325,13 +417,15 @@ def run_pipeline(
     initial_state: PipelineState = {
         "testcase_path":    testcase_path,
         "description_path": description_path,
+        "scaffolding_dir":  scaffolding_dir,
         "report_path":      report_path,
     }
 
     logger.info("🚀 Starting QC Automation Pipeline")
-    logger.info("   Testcase   : %s", testcase_path)
-    logger.info("   Description: %s", description_path)
-    logger.info("   Report     : %s", report_path)
+    logger.info("   Testcase    : %s", testcase_path)
+    logger.info("   Description : %s", description_path)
+    logger.info("   Scaffolding : %s", scaffolding_dir)
+    logger.info("   Report      : %s", report_path)
 
     if cancel_event and cancel_event.is_set():
         logger.info("Pipeline cancelled before start.")
@@ -342,25 +436,19 @@ def run_pipeline(
     if final_state.get("error"):
         logger.error("Pipeline finished with error: %s", final_state["error"])
     else:
-        report  = final_state.get("qc_report", {})
-        summary = report.get("summary", {})
+        summary = final_state.get("test_summary", {})
+        results = final_state.get("test_results", [])
         print("\n" + "═" * 60)
         print("  QC AUTOMATION REPORT SUMMARY")
         print("═" * 60)
-        print(f"  Total Testcases           : {summary.get('total_testcases', '?')}")
-        print(f"  Desc Requirements         : {summary.get('total_desc_requirements', '?')}")
-        print(f"  Covered in Description    : {summary.get('covered_in_description', '?')}")
-        print(f"  Partial in Description    : {summary.get('partial_in_description', '?')}")
-        print(f"  NOT in Description        : {summary.get('not_in_description', '?')}")
-        print(f"  Spec Conflicts            : {summary.get('spec_conflicts', '?')} ⚠")
-        print(f"  Coverage %                : {summary.get('coverage_percent', '?')}%")
-        print(f"  Quality Score             : {summary.get('quality_score', '?')}/100")
-        print(f"  Verdict                   : {summary.get('verdict', '?')}")
-        if report.get("spec_conflicts"):
-            print(f"")
-            print(f"  SPEC CONFLICTS (testcase contradicts description):")
-            for c in report["spec_conflicts"]:
-                print(f"  ⚠  {c['id']}: {c['conflict_detail']}")
+        print(f"  Total Tests   : {summary.get('total',     '?')}")
+        print(f"  Passed        : {summary.get('passed',    '?')}")
+        print(f"  Failed        : {summary.get('failed',    '?')}")
+        print(f"  Pass Rate     : {summary.get('pass_rate', '?')}%")
+        print("═" * 60)
+        for r in results:
+            icon = "✅" if r["status"] == "PASS" else "❌"
+            print(f"  {icon}  {r['id']}")
         print("═" * 60)
         print(f"  Full report saved → {report_path}\n")
 
@@ -371,13 +459,15 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="QC Automation Pipeline")
-    parser.add_argument("--testcase",    default=TESTCASE_FILE,  help="Path to testcase.js")
-    parser.add_argument("--description", default=DESC_FILE,      help="Path to description.txt")
-    parser.add_argument("--report",      default=REPORT_FILE,    help="Output path for qc_report.json")
+    parser.add_argument("--testcase",     default=TESTCASE_FILE,    help="Path to testcase.js")
+    parser.add_argument("--description",  default=DESC_FILE,        help="Path to description.txt")
+    parser.add_argument("--scaffolding",  default=SCAFFOLDING_DIR,  help="Path to scaffolding folder")
+    parser.add_argument("--report",       default=EXCEL_REPORT_FILE, help="Output path for qc_report.xlsx")
     args = parser.parse_args()
 
     run_pipeline(
         testcase_path    = args.testcase,
         description_path = args.description,
+        scaffolding_dir  = args.scaffolding,
         report_path      = args.report,
     )

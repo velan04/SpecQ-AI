@@ -132,6 +132,71 @@ class KeyRotator:
                 else:
                     raise
 
+    def invoke_vision_with_rotation(self, messages: list) -> str:
+        """
+        Invoke the LLM with multimodal messages (text + image_url blocks).
+        Uses the groq SDK directly instead of LangChain for vision compatibility
+        (langchain-groq 0.1.4 does not support multimodal content blocks).
+        messages: Groq API native format — list of {"role": ..., "content": [...]}.
+        """
+        from groq import Groq
+        attempted: set[int] = set()
+
+        while True:
+            key_idx = self._pick_available_key(attempted)
+
+            if key_idx is None:
+                wait = self._wait_for_tpm_reset()
+                if wait is None:
+                    raise RuntimeError(
+                        "All Groq API keys have hit their daily rate limit. "
+                        "Add more keys (GROQ_API_KEY_N) or wait until tomorrow."
+                    )
+                logger.info(
+                    "All %d key(s) TPM rate-limited. Waiting %ds for reset...",
+                    len(self.api_keys), wait,
+                )
+                time.sleep(wait)
+                now = time.time()
+                self.retry_after_until = {
+                    k: v for k, v in self.retry_after_until.items() if v > now
+                }
+                attempted.clear()
+                self.current_idx = 0
+                continue
+
+            self.current_idx = key_idx
+            attempted.add(key_idx)
+
+            try:
+                client = Groq(api_key=self.api_keys[key_idx])
+                response = client.chat.completions.create(
+                    model=self.model,
+                    messages=messages,
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                )
+                logger.debug("Vision key %d/%d succeeded.", key_idx + 1, len(self.api_keys))
+                return response.choices[0].message.content.strip()
+
+            except Exception as e:
+                err_str = str(e)
+                if "413" in err_str or "Payload Too Large" in err_str:
+                    raise RuntimeError(
+                        f"Vision request too large. Reduce MAX_IMAGES_SOLUTION in .env. Error: {e}"
+                    )
+                elif "429" in err_str or "rate_limit" in err_str.lower():
+                    retry_after = self._parse_retry_after(e)
+                    self._handle_rate_limit(key_idx, retry_after)
+                elif "401" in err_str or "invalid_api_key" in err_str.lower():
+                    self.session_dead.add(key_idx)
+                    logger.warning(
+                        "Vision key %d/%d is invalid — skipping for session.",
+                        key_idx + 1, len(self.api_keys),
+                    )
+                else:
+                    raise
+
     # ── Internal helpers ──────────────────────────────────────────────────────
 
     def _active_key(self) -> str:

@@ -84,3 +84,47 @@ REPORT_FILE   = os.path.join(REPORTS_DIR, "qc_report.json")
 # ── LangGraph ─────────────────────────────────────────────────────────────────
 MAX_RETRIES = 3
 VERBOSE     = True
+
+# ── New pipeline: solution generator ─────────────────────────────────────────
+# Give ALL keys — rotator skips any daily-exhausted key automatically.
+# Solution gen is the heaviest call; it needs maximum key headroom.
+GROQ_API_KEYS_SOLUTION     = GROQ_API_KEYS   # all 5 keys, rotate on 429
+GROQ_MODEL_SOLUTION        = os.getenv("GROQ_MODEL_SOLUTION", "llama-3.3-70b-versatile")
+GROQ_MODEL_SOLUTION_VISION = os.getenv("GROQ_MODEL_SOLUTION_VISION", "meta-llama/llama-4-scout-17b-16e-instruct")
+MAX_TOKENS_SOLUTION        = 7000
+MAX_IMAGES_SOLUTION        = int(os.getenv("MAX_IMAGES_SOLUTION", "3"))
+
+# ── Kimi K2 (solution generator — coding model) ───────────────────────────────
+# Provider: https://platform.kimi.ai  (international)
+# API docs: https://platform.kimi.ai/console/limits
+# Set KIMI_API_KEY in .env — auto-enabled when key is present.
+KIMI_API_KEY    = os.getenv("KIMI_API_KEY",    "") or os.getenv("MOONSHOT_API_KEY", "")
+KIMI_API_BASE   = os.getenv("KIMI_API_BASE",   "https://api.moonshot.ai/v1")
+KIMI_MODEL      = os.getenv("KIMI_MODEL",      "kimi-k2.6")
+KIMI_MAX_TOKENS = int(os.getenv("KIMI_MAX_TOKENS", "8000"))
+KIMI_ENABLED    = bool(KIMI_API_KEY) and os.getenv("KIMI_ENABLED", "true").lower() != "false"
+
+# ── S3 image upload (for vision LLM) ─────────────────────────────────────────
+# Set IMAGE_UPLOAD_ENABLED=true in .env to activate.
+# Pipeline uploads description images to S3, passes pre-signed URLs to Groq vision model.
+# Pre-signed URLs expire after S3_PRESIGN_EXPIRES_SECS (default 2 h); images deleted after pipeline.
+IMAGE_UPLOAD_ENABLED     = os.getenv("IMAGE_UPLOAD_ENABLED",     "false").lower() == "true"
+S3_BUCKET_NAME           = os.getenv("S3_BUCKET_NAME",           "")
+S3_REGION                = os.getenv("S3_REGION",                "ap-south-1")
+AWS_ACCESS_KEY_ID_S3     = os.getenv("AWS_ACCESS_KEY_ID",        "")
+AWS_SECRET_ACCESS_KEY_S3 = os.getenv("AWS_SECRET_ACCESS_KEY",    "")
+S3_IMAGE_PREFIX          = os.getenv("S3_IMAGE_PREFIX",          "qc-images/")
+S3_PRESIGN_EXPIRES_SECS  = int(os.getenv("S3_PRESIGN_EXPIRES_SECS", "7200"))  # 2 hours
+
+# ── New pipeline: failure analyzer ───────────────────────────────────────────
+# Also gets all 5 keys — runs after solution gen (sequential), so no key conflict.
+GROQ_API_KEYS_FAILURE  = GROQ_API_KEYS   # all 5 keys, rotate on 429
+GROQ_MODEL_FAILURE     = os.getenv("GROQ_MODEL_FAILURE", "llama-3.3-70b-versatile")
+MAX_TOKENS_FAILURE     = 4096
+
+# ── Scaffolding & test runner ─────────────────────────────────────────────────
+SCAFFOLDING_DIR   = os.path.join(DATA_DIR, "scaffolding")
+PUBLIC_DIR        = os.path.join(SCAFFOLDING_DIR, "public")
+TEST_SERVER_PORT  = 8765
+EXCEL_REPORT_FILE = os.path.join(REPORTS_DIR, "qc_report.xlsx")
+NODE_PATH         = os.getenv("NODE_PATH", "node")
