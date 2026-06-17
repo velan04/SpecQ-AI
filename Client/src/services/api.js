@@ -378,6 +378,17 @@ export const importFromJson = (platformJson, token = '') =>
     body: JSON.stringify({ platform_json: platformJson, token }),
   }).then(r => r.json());
 
+/**
+ * Fetch just the config[] (testcases + evaluation_type) for a question.
+ * Lightweight — no ZIP/description processing. Used by Testcase Report.
+ */
+export const questionConfig = (questionId, token) =>
+  fetch(`${BASE}/api/question-config`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question_id: questionId, token }),
+  }).then(r => r.json());
+
 /** Download the imported boilerplate ZIP as a Blob */
 export const getImportedZip = () =>
   fetch(`${BASE}/api/imported-zip`).then(r => {

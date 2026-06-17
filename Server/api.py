@@ -961,6 +961,35 @@ async def import_from_json(body: dict):
     return await _build_import_response(platform_json, raw_token, question_data_override=question_data)
 
 
+# ── POST /api/question-config ────────────────────────────────────────────────
+@app.post("/api/question-config")
+async def get_question_config(body: dict):
+    """
+    Lightweight fetch — returns just config[] (testcases + evaluation_type) for a question.
+    No ZIP download, no description processing.
+    Used by the Testcase Report page for multi-question Excel generation.
+    """
+    question_id = (body.get("question_id") or "").strip()
+    token       = (body.get("token")       or "").strip()
+
+    if not question_id:
+        return JSONResponse({"error": "question_id is required"}, status_code=400)
+    if not token:
+        return JSONResponse({"error": "token is required"}, status_code=400)
+
+    raw_token = token[7:] if token.lower().startswith("bearer ") else token
+    api_url   = f"https://api.examly.io/api/project_question/{question_id}"
+
+    try:
+        data = await _fetch_api(api_url, raw_token)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=502)
+
+    answer = data.get("answer", {})
+    config = answer.get("config", [])
+    return {"config": config, "question_id": question_id}
+
+
 async def _build_import_response(data: dict, auth_header: str, question_data_override: str = ""):
     """Shared logic: extract fields, embed images, download ZIP, save description."""
     _logger = logging.getLogger("qc_pipeline")
