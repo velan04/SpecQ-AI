@@ -210,14 +210,29 @@ def node_run_tests(state: PipelineState) -> PipelineState:
         scaf_dir  = state.get("scaffolding_dir", SCAFFOLDING_DIR)
         tc_path   = os.path.join(scaf_dir, "testcase.js")
 
+        # Load testcase weights saved during import (optional)
+        weights = None
+        weights_path = "data/testcase_weights.json"
+        if os.path.exists(weights_path):
+            with open(weights_path, encoding="utf-8") as _wf:
+                weights = json.load(_wf)
+            logger.info("Loaded testcase weights for %d testcase(s)", len(weights))
+
         runner  = TestRunner(scaffolding_dir=scaf_dir, testcase_path=tc_path)
-        outcome = runner.run()
+        outcome = runner.run(weights=weights)
 
         summary = outcome["summary"]
-        logger.info(
-            "Tests complete — %d/%d passed (%.1f%%)",
-            summary["passed"], summary["total"], summary["pass_rate"],
-        )
+        if "weighted_score" in summary:
+            logger.info(
+                "Tests complete — %d/%d passed (%.1f%%) | Weighted score: %.1f%%",
+                summary["passed"], summary["total"], summary["pass_rate"],
+                summary["weighted_score"],
+            )
+        else:
+            logger.info(
+                "Tests complete — %d/%d passed (%.1f%%)",
+                summary["passed"], summary["total"], summary["pass_rate"],
+            )
 
         # When 0 results, surface the raw output prominently so user can diagnose
         if summary["total"] == 0:
@@ -445,6 +460,8 @@ def run_pipeline(
         print(f"  Passed        : {summary.get('passed',    '?')}")
         print(f"  Failed        : {summary.get('failed',    '?')}")
         print(f"  Pass Rate     : {summary.get('pass_rate', '?')}%")
+        if "weighted_score" in summary:
+            print(f"  Weighted Score: {summary['weighted_score']}%")
         print("═" * 60)
         for r in results:
             icon = "✅" if r["status"] == "PASS" else "❌"

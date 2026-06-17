@@ -37,9 +37,9 @@ from langchain_core.messages import SystemMessage, HumanMessage
 logger = logging.getLogger(__name__)
 
 # ── Image compression constants ───────────────────────────────────────────────
-_MAX_SIDE_PX    = 1024      # resize to this on the longest dimension
-_MAX_SIZE_BYTES = 400_000   # skip image if still larger than this after compression
-_JPEG_QUALITY   = 80
+_MAX_SIDE_PX    = 1280      # larger → more pixels → sharper label/placeholder text
+_MAX_SIZE_BYTES = 600_000   # 600 KB — allow bigger images to preserve text clarity
+_JPEG_QUALITY   = 90        # higher quality → less blur on thin UI text
 
 
 class SolutionGeneratorAgent:
@@ -114,8 +114,11 @@ class SolutionGeneratorAgent:
 
         image_notice = (
             f"DESIGN IMAGES: {len(images)} design image(s) are attached below. "
-            "They are the authoritative visual reference — match colors, layout, "
-            "spacing, and typography exactly as shown in the images."
+            "They are the authoritative visual reference. "
+            "CRITICAL: Before writing any code, carefully read EVERY text element "
+            "visible in the images — input labels, placeholder text, button text, "
+            "dropdown options, headings, error messages. "
+            "Use these exact strings in your HTML. Do not invent your own text."
         ) if has_images else "DESIGN IMAGES: No design images were found in the description."
 
         # ── Step 3: format prompt — testcase is completely hidden from AI ────

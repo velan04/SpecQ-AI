@@ -989,6 +989,13 @@ async def _build_import_response(data: dict, auth_header: str, question_data_ove
         f.write(enriched_html)
     _logger.info("Saved description.txt (%d chars)", len(enriched_html))
 
+    # Save testcase weights so the pipeline can compute a weighted pass rate
+    if testcases:
+        weights = {tc["name"]: tc.get("weightage", 0) for tc in testcases if tc.get("name")}
+        with open("data/testcase_weights.json", "w", encoding="utf-8") as f:
+            json.dump(weights, f, indent=2)
+        _logger.info("Saved testcase_weights.json — %d testcase(s)", len(weights))
+
     # 4. Download ZIP — S3 needs Origin header only, no auth token
     zip_saved = await _download_zip(zip_url) if zip_url else False
 
@@ -1214,14 +1221,27 @@ async def run_tests_only():
             import json
 
             _logger.info("═══ Node: run_tests ═══")
+            weights = None
+            weights_path = "data/testcase_weights.json"
+            if os.path.exists(weights_path):
+                with open(weights_path, encoding="utf-8") as _wf:
+                    weights = json.load(_wf)
+                _logger.info("Loaded testcase weights for %d testcase(s)", len(weights))
             runner  = TestRunner(scaffolding_dir=scaffolding_dir, testcase_path=testcase_path)
-            outcome = runner.run()
+            outcome = runner.run(weights=weights)
             test_results = outcome["results"]
             test_summary = outcome["summary"]
-            _logger.info(
-                "Tests complete — %d/%d passed (%.1f%%)",
-                test_summary["passed"], test_summary["total"], test_summary["pass_rate"],
-            )
+            if "weighted_score" in test_summary:
+                _logger.info(
+                    "Tests complete — %d/%d passed (%.1f%%) | Weighted: %.1f%%",
+                    test_summary["passed"], test_summary["total"], test_summary["pass_rate"],
+                    test_summary["weighted_score"],
+                )
+            else:
+                _logger.info(
+                    "Tests complete — %d/%d passed (%.1f%%)",
+                    test_summary["passed"], test_summary["total"], test_summary["pass_rate"],
+                )
 
             # Failure analysis for any failures
             failure_analysis = []

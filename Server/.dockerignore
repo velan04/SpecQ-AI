@@ -1,0 +1,12 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.env
+.git
+.gitignore
+reports/*.json
+reports/*.xlsx
+data/scaffolding/node_modules/
+data/scaffolding/public/
+data/ocr_images/

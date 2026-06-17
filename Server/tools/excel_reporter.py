@@ -124,6 +124,13 @@ def _build_summary_sheet(wb: openpyxl.Workbook, summary: Dict) -> None:
         ("Pass Rate",        f"{summary.get('pass_rate', 0.0):.1f}%",
          _GREEN_FILL if summary.get("pass_rate", 0) >= 70 else _RED_FILL),
     ]
+    if "weighted_score" in summary:
+        ws_val = summary["weighted_score"]
+        rows.append((
+            "Weighted Score",
+            f"{ws_val:.1f}%",
+            _GREEN_FILL if ws_val >= 70 else _RED_FILL,
+        ))
 
     for i, (label, value, fill) in enumerate(rows, start=4):
         label_cell = ws.cell(row=i, column=1, value=label)

@@ -1,0 +1,42 @@
+services:
+  # ── Backend — FastAPI + Node.js + Chromium (Docker) ──────────────────────────
+  - type: web
+    name: qc-automation-backend
+    env: docker
+    dockerfilePath: ./Server/Dockerfile
+    dockerContext: ./Server
+    plan: free
+    envVars:
+      - key: GROQ_API_KEY_1
+        sync: false
+      - key: GROQ_API_KEY_2
+        sync: false
+      - key: GROQ_API_KEY_3
+        sync: false
+      - key: GROQ_API_KEY_4
+        sync: false
+      - key: GROQ_API_KEY_5
+        sync: false
+      - key: KIMI_API_KEY
+        sync: false
+      - key: KIMI_API_BASE
+        value: https://api.moonshot.ai/v1
+      - key: KIMI_MODEL
+        value: kimi-k2.6
+      - key: KIMI_ENABLED
+        value: "true"
+      - key: OCR_API_URL
+        value: https://velan2904-image-ocr.hf.space/ocr
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+  # ── Frontend — React/Vite static site ────────────────────────────────────────
+  - type: web
+    name: qc-automation-frontend
+    env: static
+    rootDir: Client
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        sync: false

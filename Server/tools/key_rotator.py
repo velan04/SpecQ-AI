@@ -238,12 +238,12 @@ class KeyRotator:
                 key_idx + 1, len(self.api_keys), retry_after, DAILY_LIMIT_THRESHOLD,
             )
         else:
-            reset_at = time.time() + max(retry_after, 60) + 2
+            reset_at = time.time() + retry_after + 2
             self.retry_after_until[key_idx] = reset_at
             next_idx = (key_idx + 1) % len(self.api_keys)
             self.current_idx = next_idx
             logger.info(
-                "Key %d/%d TPM rate-limited (retry-after %ds). Rotated to key %d/%d.",
+                "Key %d/%d TPM rate-limited (reset in %ds). Rotated to key %d/%d.",
                 key_idx + 1, len(self.api_keys), retry_after,
                 next_idx + 1, len(self.api_keys),
             )
@@ -251,11 +251,23 @@ class KeyRotator:
     def _parse_retry_after(self, exc: Exception) -> int:
         """
         Extract the retry-after value (seconds) from a Groq 429 exception.
+        Prefers x-ratelimit-reset-tokens (actual TPM window reset, e.g. "35.085s")
+        over retry-after (request-level backoff, usually 10s).
         Falls back to 60 if not parseable.
         """
         # groq SDK exposes response headers on RateLimitError
         try:
             headers = exc.response.headers  # type: ignore[attr-defined]
+            # x-ratelimit-reset-tokens = actual token bucket reset time (e.g. "35.085s")
+            token_reset = headers.get("x-ratelimit-reset-tokens")
+            if token_reset:
+                # Format: "35.085s" or "35085ms" or plain "35"
+                m = re.match(r"([\d.]+)(ms|s)?", str(token_reset).strip())
+                if m:
+                    val = float(m.group(1))
+                    if m.group(2) == "ms":
+                        val = val / 1000.0
+                    return int(val) + 1  # +1 for safety margin
             val = headers.get("retry-after") or headers.get("x-ratelimit-reset-requests")
             if val:
                 return int(float(val))

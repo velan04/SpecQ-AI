@@ -53,14 +53,17 @@ class TestRunner:
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def run(self) -> Dict[str, Any]:
+    def run(self, weights: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         """
         Full run: ensure deps → start server → run tests → stop server.
+
+        Args:
+            weights: optional {testcase_id: weightage} map for weighted pass rate.
 
         Returns:
             {
                 "results":    [{id, name, status, error_message}, ...],
-                "summary":    {total, passed, failed, pass_rate},
+                "summary":    {total, passed, failed, pass_rate[, weighted_score]},
                 "raw_output": str,
                 "raw_stderr": str,
             }
@@ -68,7 +71,7 @@ class TestRunner:
         self._ensure_dependencies()
         self._start_server()
         try:
-            return self._execute_tests()
+            return self._execute_tests(weights=weights)
         finally:
             self._stop_server()
 
@@ -159,7 +162,7 @@ class TestRunner:
 
     # ── Test execution ────────────────────────────────────────────────────────
 
-    def _execute_tests(self) -> Dict[str, Any]:
+    def _execute_tests(self, weights: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
         base_url = f"http://localhost:{self.port}"
 
         # Read testcase.js and patch the URL constant
@@ -253,7 +256,7 @@ class TestRunner:
                     logger.warning("STDERR: %s", line)
 
             results = self._parse_output(stdout, stderr)
-            summary = self._build_summary(results)
+            summary = self._build_summary(results, weights=weights)
 
             # If nothing was parsed, dump the raw stdout so it appears in the frontend logs
             if not results:
@@ -277,9 +280,12 @@ class TestRunner:
 
         except subprocess.TimeoutExpired:
             logger.error("Test run timed out after 180 seconds.")
+            empty_summary: Dict[str, Any] = {"total": 0, "passed": 0, "failed": 0, "pass_rate": 0.0}
+            if weights:
+                empty_summary["weighted_score"] = 0.0
             return {
                 "results":    [],
-                "summary":    {"total": 0, "passed": 0, "failed": 0, "pass_rate": 0.0},
+                "summary":    empty_summary,
                 "raw_output": "",
                 "raw_stderr": "TIMEOUT: tests did not complete within 180 seconds",
             }
@@ -370,12 +376,30 @@ class TestRunner:
         return list(seen.values())
 
     @staticmethod
-    def _build_summary(results: List[Dict]) -> Dict:
+    def _build_summary(results: List[Dict], weights: Optional[Dict[str, float]] = None) -> Dict:
         total  = len(results)
         passed = sum(1 for r in results if r["status"] == "PASS")
         failed = total - passed
         rate   = round(passed / total * 100, 1) if total else 0.0
-        return {"total": total, "passed": passed, "failed": failed, "pass_rate": rate}
+
+        summary: Dict[str, Any] = {
+            "total": total, "passed": passed, "failed": failed, "pass_rate": rate,
+        }
+
+        if weights:
+            weighted_passed = sum(
+                weights.get(r["id"], 0.0)
+                for r in results if r["status"] == "PASS"
+            )
+            total_weight = sum(weights.get(r["id"], 0.0) for r in results)
+            weighted_score = round(weighted_passed / total_weight * 100, 1) if total_weight else 0.0
+            summary["weighted_score"] = weighted_score
+            logger.info(
+                "Weighted score: %.1f%% (passed weight %.3f / total weight %.3f)",
+                weighted_score, weighted_passed, total_weight,
+            )
+
+        return summary
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────

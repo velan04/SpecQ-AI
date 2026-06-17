@@ -69,6 +69,27 @@ If the OCR TEXT section says something different from what you see in the design
 images, ALWAYS trust the images. OCR can misread fonts, colors, labels, and layout.
 The images are ground truth; OCR text is a supplementary hint only.
 
+RULE 13 — READ EVERY TEXT ELEMENT FROM IMAGES:
+When design images are provided, you MUST carefully read and extract EVERY text
+element visible in the image and reproduce them exactly:
+  - Input field labels (e.g. "Project Name", "Budget (₹)", "Team Members")
+  - Placeholder text inside input fields (e.g. placeholder="Enter project name")
+  - Button text (e.g. "Add Project", "Submit", "Reset")
+  - Dropdown/select option text (every visible option)
+  - Heading and subheading text
+  - Error message text
+  - Table column headers
+  - Any other visible text in the UI
+Do NOT invent your own label or placeholder text. If the image shows
+placeholder="Enter budget here", you MUST use that exact string.
+Zoom in mentally on each form field — read its label and placeholder.
+
+RULE 14 — OCR TEXT IS STRUCTURED IMAGE TEXT:
+The "OCR TEXT FROM DESCRIPTION IMAGES" section contains text extracted from
+the design images. This is a high-fidelity record of text that appears in the
+UI. Use it to confirm every label, placeholder, and button text you see in the
+images. If the OCR mentions a specific string, it MUST appear in your output.
+
 ════════════════════════════════════════
 OUTPUT FORMAT — EXACTLY THREE CODE BLOCKS:
 ════════════════════════════════════════
@@ -95,10 +116,12 @@ SOLUTION_USER = """Generate a complete implementation for the following web appl
 PROJECT DESCRIPTION:
 {description}
 
-OCR TEXT FROM DESCRIPTION IMAGES:
+OCR TEXT EXTRACTED FROM DESIGN IMAGES (use every string verbatim in your implementation):
 {ocr_text}
 
 {image_notice}
 
 Generate index.html, style.css, and script.js following all rules above.
-Build the application exactly as specified in the description."""
+Build the application exactly as specified in the description.
+IMPORTANT: Before writing HTML, list every label, placeholder, and button text
+you can see in the design images and OCR text, then use those exact strings."""
