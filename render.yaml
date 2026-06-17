@@ -27,6 +27,8 @@ services:
         value: "true"
       - key: OCR_API_URL
         value: https://velan2904-image-ocr.hf.space/ocr
+      - key: HF_TOKEN
+        sync: false
       - key: PYTHONUNBUFFERED
         value: "1"
 
