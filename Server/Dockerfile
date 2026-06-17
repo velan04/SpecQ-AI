@@ -38,12 +38,6 @@ RUN pip install --no-cache-dir --upgrade pip && \
 # Copy the full server code
 COPY . .
 
-# Pre-install Puppeteer in scaffolding so first run is fast
-# (runtime npm install still works if user uploads a new ZIP)
-RUN cd data/scaffolding && \
-    npm install --prefer-offline && \
-    npm cache clean --force
-
 EXPOSE 8000
 
 # Railway injects $PORT; fall back to 8000 locally
