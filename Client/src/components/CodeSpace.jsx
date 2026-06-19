@@ -10,6 +10,7 @@ import {
 import {
   getSolutionFiles, saveSolutionFiles, runTestsOnly,
   getStatus, getReport, getPreviewUrl, getTestcase,
+  getDotNetSolutionFiles, getDotNetTestcaseFiles,
 } from '../services/api';
 
 /* ── Theme ──────────────────────────────────────────────────────────────────── */
@@ -133,6 +134,48 @@ function tokenizeLine(raw, lang) {
         const q = ch; let str = q; i++;
         while (i < raw.length && raw[i] !== q) {
           if (raw[i] === '\\' && i + 1 < raw.length) { str += raw[i] + raw[i + 1]; i += 2; }
+          else str += raw[i++];
+        }
+        str += (raw[i] || ''); i++;
+        push(str, '#86EFAC');
+      } else if (/[0-9]/.test(ch) && !buf) {
+        let num = '';
+        while (i < raw.length && /[0-9.]/.test(raw[i])) num += raw[i++];
+        push(num, '#FBBF24');
+      } else { buf += ch; i++; }
+    }
+    flushBuf();
+  } else if (lang === 'cs') {
+    const CS_KW = new Set([
+      'using','namespace','class','public','private','protected','static','void',
+      'return','new','this','base','if','else','for','foreach','while','do',
+      'try','catch','finally','throw','override','virtual','abstract','sealed',
+      'interface','enum','struct','readonly','const','var','string','int','bool',
+      'double','float','long','object','List','Dictionary','null','true','false',
+      'in','out','ref','params','get','set','async','await','partial',
+    ]);
+    const trimmed = raw.trimStart();
+    if (trimmed.startsWith('//')) { push(raw, '#6B7280'); return toks; }
+    if (trimmed.startsWith('/*') || trimmed.startsWith('*')) { push(raw, '#6B7280'); return toks; }
+    let buf = '';
+    const flushBuf = () => {
+      if (!buf) return;
+      const wordRe = /([A-Za-z_][\w]*)|([^A-Za-z_\w]+)/g;
+      let m;
+      while ((m = wordRe.exec(buf)) !== null) {
+        if (m[1]) push(m[1], CS_KW.has(m[1]) ? '#60A5FA' : /^[A-Z]/.test(m[1]) ? '#F87171' : '#C8C3FF');
+        else push(m[0], '#C8C3FF');
+      }
+      buf = '';
+    };
+    while (i < raw.length) {
+      const ch = raw[i];
+      if (ch === '/' && raw[i+1] === '/') { flushBuf(); push(raw.slice(i), '#6B7280'); i = raw.length;
+      } else if (ch === '"') {
+        flushBuf();
+        let str = '"'; i++;
+        while (i < raw.length && raw[i] !== '"') {
+          if (raw[i] === '\\' && i+1 < raw.length) { str += raw[i] + raw[i+1]; i += 2; }
           else str += raw[i++];
         }
         str += (raw[i] || ''); i++;
@@ -586,6 +629,169 @@ const iconBtnStyle = {
   display: 'flex', alignItems: 'center', justifyContent: 'center',
   width: '28px', height: '28px', border: 'none', borderRadius: '6px',
   background: 'transparent', cursor: 'pointer', transition: 'background 0.15s',
+};
+
+/* ── DotNetCodeSpace ────────────────────────────────────────────────────────── */
+export const DotNetCodeSpace = ({ initialReport }) => {
+  const [solutionFiles,  setSolutionFiles]  = useState({});
+  const [testcaseFiles,  setTestcaseFiles]  = useState({});
+  const [activeTab,      setActiveTab]      = useState(null);
+  const [loading,        setLoading]        = useState(true);
+  const [copied,         setCopied]         = useState(false);
+
+  useEffect(() => {
+    Promise.all([
+      getDotNetSolutionFiles().catch(() => ({})),
+      getDotNetTestcaseFiles().catch(() => ({})),
+    ]).then(([sol, tc]) => {
+      setSolutionFiles(sol || {});
+      setTestcaseFiles(tc  || {});
+      const firstTab = Object.keys(sol || {})[0] || Object.keys(tc || {})[0] || null;
+      setActiveTab(firstTab);
+      setLoading(false);
+    });
+  }, []);
+
+  const allTabs = [
+    ...Object.keys(solutionFiles).map(f => ({ key: f, label: f, group: 'solution', color: '#86EFAC' })),
+    ...Object.keys(testcaseFiles).map(f => ({ key: `tc:${f}`, label: f, group: 'testcase', color: '#FB923C' })),
+  ];
+
+  const currentContent = (() => {
+    if (!activeTab) return '';
+    if (activeTab.startsWith('tc:')) return testcaseFiles[activeTab.slice(3)] || '';
+    return solutionFiles[activeTab] || '';
+  })();
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(currentContent).catch(() => {});
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const lineCount = currentContent.split('\n').length;
+
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column',
+      background: T.surface, borderRadius: '16px',
+      border: `1px solid ${T.border}`, overflow: 'hidden',
+      boxShadow: '0 4px 32px rgba(0,0,0,0.35)',
+      fontFamily: T.fontSans,
+    }}>
+      {/* Header */}
+      <div style={{
+        background: T.panel, borderBottom: `1px solid ${T.border}`,
+        padding: '14px 20px', display: 'flex', alignItems: 'center', gap: '14px',
+      }}>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          {['#EF4444','#F59E0B','#10B981'].map((c,i) => (
+            <div key={i} style={{ width:11, height:11, borderRadius:'50%', background:c, opacity:0.8 }} />
+          ))}
+        </div>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize:'13px', fontWeight:'700', color:T.textPrimary }}>⚙️ .NET Solution Files</div>
+          <div style={{ fontSize:'11px', color:T.textMuted, marginTop:'1px' }}>
+            AI-generated C# · NUnit testcases (read-only)
+          </div>
+        </div>
+      </div>
+
+      {/* Tab bar */}
+      <div style={{
+        background: T.panel, borderBottom: `1px solid ${T.border}`,
+        display: 'flex', alignItems: 'center', padding: '0 4px', gap: '2px',
+        overflowX: 'auto',
+      }}>
+        {/* Group label: Solution */}
+        {Object.keys(solutionFiles).length > 0 && (
+          <span style={{ fontSize:'9px', fontWeight:'700', color:T.textTiny, padding:'0 8px', whiteSpace:'nowrap', textTransform:'uppercase', letterSpacing:'0.08em', flexShrink:0 }}>
+            Solution
+          </span>
+        )}
+        {allTabs.filter(t => t.group === 'solution').map(tab => (
+          <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{
+            display:'flex', alignItems:'center', gap:'6px',
+            padding:'10px 14px', border:'none', cursor:'pointer',
+            background: activeTab === tab.key ? T.surface : 'transparent',
+            color: activeTab === tab.key ? tab.color : T.textMuted,
+            fontSize:'12px', fontWeight: activeTab === tab.key ? '700' : '500',
+            fontFamily: T.fontMono, whiteSpace:'nowrap',
+            borderRadius:'6px 6px 0 0',
+            borderBottom: activeTab === tab.key ? `2px solid ${tab.color}` : '2px solid transparent',
+            transition:'all 0.15s', flexShrink:0,
+          }}>
+            <FileCode2 size={12} />{tab.label}
+          </button>
+        ))}
+        {/* Separator */}
+        {Object.keys(testcaseFiles).length > 0 && Object.keys(solutionFiles).length > 0 && (
+          <div style={{ width:'1px', height:'28px', background:T.border, margin:'0 4px', flexShrink:0 }} />
+        )}
+        {Object.keys(testcaseFiles).length > 0 && (
+          <span style={{ fontSize:'9px', fontWeight:'700', color:T.textTiny, padding:'0 8px', whiteSpace:'nowrap', textTransform:'uppercase', letterSpacing:'0.08em', flexShrink:0 }}>
+            Testcases
+          </span>
+        )}
+        {allTabs.filter(t => t.group === 'testcase').map(tab => (
+          <button key={tab.key} onClick={() => setActiveTab(tab.key)} style={{
+            display:'flex', alignItems:'center', gap:'6px',
+            padding:'10px 14px', border:'none', cursor:'pointer',
+            background: activeTab === tab.key ? T.surface : 'transparent',
+            color: activeTab === tab.key ? tab.color : T.textMuted,
+            fontSize:'12px', fontWeight: activeTab === tab.key ? '700' : '500',
+            fontFamily: T.fontMono, whiteSpace:'nowrap',
+            borderRadius:'6px 6px 0 0',
+            borderBottom: activeTab === tab.key ? `2px solid ${tab.color}` : '2px solid transparent',
+            transition:'all 0.15s', flexShrink:0,
+          }}>
+            <FileCode2 size={12} />{tab.label}
+          </button>
+        ))}
+        <div style={{ flex:1 }} />
+        {/* Copy button */}
+        {activeTab && (
+          <button onClick={handleCopy} title="Copy" style={{ ...iconBtnStyle, marginRight:'8px' }}>
+            {copied ? <Check size={13} color={T.green} /> : <Copy size={13} color={T.textMuted} />}
+          </button>
+        )}
+      </div>
+
+      {/* Content */}
+      <div style={{ flex:1, minHeight:'460px', background:T.bg, overflow:'hidden' }}>
+        {loading ? (
+          <div style={{ flex:1, display:'flex', alignItems:'center', justifyContent:'center', color:T.textMuted, fontSize:'13px', gap:'10px', padding:'40px' }}>
+            <RefreshCw size={14} style={{ animation:'spin 0.8s linear infinite' }} /> Loading…
+          </div>
+        ) : !activeTab ? (
+          <div style={{ padding:'32px', color:T.textMuted, fontSize:'13px', fontFamily:T.fontSans }}>
+            No .cs files found — run the pipeline first.
+          </div>
+        ) : (
+          <div style={{ overflow:'auto', height:'100%' }}>
+            <CodeBlock content={currentContent} lang="cs" />
+          </div>
+        )}
+      </div>
+
+      {/* Footer */}
+      {activeTab && !loading && (
+        <div style={{
+          background:T.panel, borderTop:`1px solid ${T.border}`,
+          padding:'6px 16px', display:'flex', alignItems:'center', gap:'16px',
+          fontSize:'11px', color:T.textTiny, fontFamily:T.fontMono,
+        }}>
+          <span style={{ color: allTabs.find(t=>t.key===activeTab)?.color, fontWeight:'600' }}>
+            {activeTab.startsWith('tc:') ? activeTab.slice(3) : activeTab}
+          </span>
+          <span>{lineCount} lines</span>
+          <span>C#</span>
+          <div style={{ flex:1 }} />
+          <span>UTF-8</span>
+        </div>
+      )}
+    </div>
+  );
 };
 
 export default CodeSpace;

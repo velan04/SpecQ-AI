@@ -8,10 +8,11 @@ const WS_BASE = BASE.replace('https://', 'wss://').replace('http://', 'ws://');
  * descriptionContent: string  — HTML from RichTextEditor (may contain base64 images)
  * scaffoldingZipFile: File|null — full scaffolding ZIP (package.json + node_modules + public/)
  */
-export const startPipeline = async (testcaseContent, descriptionContent, scaffoldingZipFile = null) => {
+export const startPipeline = async (testcaseContent, descriptionContent, scaffoldingZipFile = null, projectType = 'html') => {
   const form = new FormData();
-  form.append('testcase',    new Blob([testcaseContent],    { type: 'text/javascript' }), 'testcase.js');
-  form.append('description', new Blob([descriptionContent], { type: 'text/plain'       }), 'description.txt');
+  form.append('testcase',     new Blob([testcaseContent],    { type: 'text/javascript' }), 'testcase.js');
+  form.append('description',  new Blob([descriptionContent], { type: 'text/plain'       }), 'description.txt');
+  form.append('project_type', projectType);
   if (scaffoldingZipFile) {
     form.append('scaffolding_zip', scaffoldingZipFile, 'scaffolding.zip');
   }
@@ -38,6 +39,14 @@ export const createLogSocket = () =>
 /** Get AI-generated solution files: { "index.html": str, "style.css": str, "script.js": str } */
 export const getSolutionFiles = () =>
   fetch(`${BASE}/api/solution-files`).then(r => r.json());
+
+/** Get AI-generated dotnet .cs files: { "Program.cs": str, "VehiclePart.cs": str, ... } */
+export const getDotNetSolutionFiles = () =>
+  fetch(`${BASE}/api/dotnet-solution-files`).then(r => r.json());
+
+/** Get NUnit testcase .cs files: { "ProgramTests.cs": str, ... } */
+export const getDotNetTestcaseFiles = () =>
+  fetch(`${BASE}/api/dotnet-testcase-files`).then(r => r.json());
 
 /** Overwrite AI-generated files on disk */
 export const saveSolutionFiles = (files) =>
@@ -388,6 +397,10 @@ export const questionConfig = (questionId, token) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ question_id: questionId, token }),
   }).then(r => r.json());
+
+/** Extract NUnit testcase .cs files from the imported ZIP without running the pipeline */
+export const previewTestcases = () =>
+  fetch(`${BASE}/api/preview-testcases`).then(r => r.json());
 
 /** Download the imported boilerplate ZIP as a Blob */
 export const getImportedZip = () =>

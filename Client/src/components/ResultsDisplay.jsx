@@ -242,8 +242,122 @@ const TestCard = ({ result, analysis }) => {
 };
 
 // ─── Main ResultsDisplay ──────────────────────────────────────────────────────
-const ResultsDisplay = ({ report }) => {
+// ─── Terminal Drawer ──────────────────────────────────────────────────────────
+function TerminalDrawer({ stdout = '', stderr = '', label = 'terminal' }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const combined = [
+    stderr ? `\x1b[31m── STDERR ──\x1b[0m\n${stderr}` : '',
+    stdout ? `\x1b[36m── STDOUT ──\x1b[0m\n${stdout}` : '',
+  ].filter(Boolean).join('\n\n');
+
+  const raw = [stderr, stdout].filter(Boolean).join('\n\n');
+  const lines = raw.split('\n');
+
+  const copy = () => {
+    navigator.clipboard.writeText(raw).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
+  };
+
+  const colorLine = (line) => {
+    if (/\berror\b/i.test(line))   return '#f87171';
+    if (/\bwarning\b/i.test(line)) return '#fbbf24';
+    if (/\bPassed\b/i.test(line))  return '#34d399';
+    if (/\bFailed\b/i.test(line))  return '#f87171';
+    if (/^\s*(Determining|Restoring|All projects|Build succeeded)/i.test(line)) return '#a78bfa';
+    return '#d1d5db';
+  };
+
+  return (
+    <div style={{ maxWidth: 580, margin: '18px auto 0', fontFamily: "'DM Mono','Fira Code',monospace" }}>
+      {/* Title bar */}
+      <div
+        onClick={() => setOpen(o => !o)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          background: '#1e1e2e', borderRadius: open ? '8px 8px 0 0' : 8,
+          padding: '7px 12px', cursor: 'pointer', userSelect: 'none',
+          border: '1px solid #313244', borderBottom: open ? '1px solid #313244' : undefined,
+        }}
+      >
+        {/* Traffic lights */}
+        <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#ff5f57', display: 'inline-block' }} />
+        <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#febc2e', display: 'inline-block' }} />
+        <span style={{ width: 11, height: 11, borderRadius: '50%', background: '#28c840', display: 'inline-block' }} />
+        <span style={{ flex: 1, fontSize: 11, color: '#a6adc8', letterSpacing: '0.08em', paddingLeft: 6 }}>
+          {label} — build output
+          <span style={{ marginLeft: 10, color: '#585b70', fontSize: 10 }}>
+            {lines.length} lines
+          </span>
+        </span>
+        {stderr && (
+          <span style={{ fontSize: 10, background: '#3b0000', color: '#f87171', borderRadius: 4, padding: '1px 7px', marginRight: 4 }}>
+            errors
+          </span>
+        )}
+        <span style={{ fontSize: 11, color: '#585b70' }}>{open ? '▲' : '▼'}</span>
+      </div>
+
+      {/* Body */}
+      {open && (
+        <div style={{
+          background: '#11111b', border: '1px solid #313244', borderTop: 'none',
+          borderRadius: '0 0 8px 8px', overflow: 'hidden',
+        }}>
+          {/* Toolbar */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'flex-end',
+            padding: '4px 10px', background: '#181825', borderBottom: '1px solid #1e1e2e',
+            gap: 8,
+          }}>
+            <span style={{ fontSize: 10, color: '#45475a', flex: 1 }}>~/build-output</span>
+            <button
+              onClick={copy}
+              style={{
+                fontSize: 10, background: copied ? '#1e3a2f' : '#1e1e2e',
+                color: copied ? '#34d399' : '#585b70', border: '1px solid #313244',
+                borderRadius: 4, padding: '2px 9px', cursor: 'pointer', transition: 'all 0.2s',
+              }}
+            >
+              {copied ? '✓ copied' : 'copy'}
+            </button>
+          </div>
+
+          {/* Lines */}
+          <div style={{ maxHeight: 340, overflowY: 'auto', padding: '10px 0' }}>
+            {lines.map((line, i) => (
+              <div
+                key={i}
+                style={{ display: 'flex', alignItems: 'flex-start', padding: '0 14px', lineHeight: 1.7 }}
+              >
+                <span style={{
+                  minWidth: 32, textAlign: 'right', marginRight: 14, fontSize: 10,
+                  color: '#313244', userSelect: 'none', flexShrink: 0, paddingTop: 1,
+                }}>
+                  {i + 1}
+                </span>
+                <span style={{
+                  fontSize: 11, color: colorLine(line),
+                  whiteSpace: 'pre-wrap', wordBreak: 'break-all', flex: 1,
+                }}>
+                  {line || ' '}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const ResultsDisplay = ({ report, projectType = 'html' }) => {
   if (!report) return null;
+
+  const isDotNet = projectType === 'dotnet';
 
   const {
     summary = {},
@@ -266,6 +380,20 @@ const ResultsDisplay = ({ report }) => {
 
   /* ── Empty state: test runner produced no results ──────────────────────── */
   if (total === 0) {
+    const htmlCauses = [
+      { icon: '📦', title: 'puppeteer not installed', desc: 'Your ZIP must contain package.json. The runner will auto-run npm install — check the Live Logs for "npm install" output.' },
+      { icon: '📄', title: 'Wrong output format', desc: 'testcase.js must print: console.log(`TESTCASE:your_id:success`) or :failure for each test.' },
+      { icon: '🔗', title: 'URL not patched', desc: 'If no const/let/var url = "https://..." line is found, Puppeteer navigates to the wrong host. Check logs for "URL pattern not found" warning.' },
+      { icon: '⏱', title: 'Timeout / crash', desc: 'Node process may have crashed before printing anything. Check STDERR lines in the Live Logs.' },
+    ];
+    const dotnetCauses = [
+      { icon: '⚙️', title: '.NET SDK not installed', desc: 'The server needs .NET 6 SDK. Install from https://dotnet.microsoft.com/download/dotnet/6.0 and ensure "dotnet" is on PATH.' },
+      { icon: '📦', title: 'run.sh not found in ZIP', desc: 'The ZIP must contain nunit/run.sh with the embedded NUnit test archive. Check the ZIP structure.' },
+      { icon: '🔨', title: 'dotnet build failed', desc: 'The AI-generated C# code may have compilation errors. Check the STDERR output below for build errors.' },
+      { icon: '📄', title: 'NUnit output format issue', desc: 'dotnet test output is parsed for "Passed TestName" / "Failed TestName" lines. Ensure NUnit3TestAdapter is referenced in TestProject.csproj.' },
+    ];
+    const causes = isDotNet ? dotnetCauses : htmlCauses;
+
     return (
       <QCErrorBoundary>
         <div style={{
@@ -288,17 +416,14 @@ const ResultsDisplay = ({ report }) => {
               No Test Results Found
             </h2>
             <p style={{ fontSize: 13, color: th.textSecondary, margin: '0 0 24px', lineHeight: 1.6, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
-              The Puppeteer test runner completed but returned 0 results. This usually means one of the following:
+              {isDotNet
+                ? 'The .NET test runner completed but returned 0 results. This usually means one of the following:'
+                : 'The Puppeteer test runner completed but returned 0 results. This usually means one of the following:'}
             </p>
 
             {/* Cause list */}
             <div style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto 28px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {[
-                { icon: '📦', title: 'puppeteer not installed', desc: 'Your ZIP must contain package.json. The runner will auto-run npm install — check the Live Logs for "npm install" output.' },
-                { icon: '📄', title: 'Wrong output format', desc: 'testcase.js must print: console.log(`TESTCASE:your_id:success`) or :failure for each test.' },
-                { icon: '🔗', title: 'URL not patched', desc: 'If no const/let/var url = "https://..." line is found, Puppeteer navigates to the wrong host. Check logs for "URL pattern not found" warning.' },
-                { icon: '⏱', title: 'Timeout / crash', desc: 'Node process may have crashed before printing anything. Check STDERR lines in the Live Logs.' },
-              ].map((c, i) => (
+              {causes.map((c, i) => (
                 <div key={i} style={{
                   display: 'flex', gap: 12, padding: '10px 14px',
                   background: th.indigo50, borderRadius: th.radiusSm,
@@ -313,54 +438,33 @@ const ResultsDisplay = ({ report }) => {
               ))}
             </div>
 
-            {/* Required format snippet */}
-            <div style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto 24px' }}>
-              <p style={{ fontSize: 11, fontWeight: 700, color: th.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
-                Required output format in testcase.js
-              </p>
-              <pre style={{
-                fontSize: 12, fontFamily: "'DM Mono','Fira Code',monospace",
-                background: '#0f0e26', color: '#c8c3ff', padding: '12px 16px',
-                borderRadius: th.radiusSm, margin: 0, lineHeight: 1.7, whiteSpace: 'pre-wrap',
-              }}>{`// Wrap each test in try/catch and print the result:
+            {/* HTML-only: required format snippet */}
+            {!isDotNet && (
+              <div style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto 24px' }}>
+                <p style={{ fontSize: 11, fontWeight: 700, color: th.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+                  Required output format in testcase.js
+                </p>
+                <pre style={{
+                  fontSize: 12, fontFamily: "'DM Mono','Fira Code',monospace",
+                  background: '#0f0e26', color: '#c8c3ff', padding: '12px 16px',
+                  borderRadius: th.radiusSm, margin: 0, lineHeight: 1.7, whiteSpace: 'pre-wrap',
+                }}>{`// Wrap each test in try/catch and print the result:
 try {
   await page.waitForSelector('#my-element', {timeout: 5000});
   console.log('TESTCASE:check_element:success');
 } catch (e) {
   console.log('TESTCASE:check_element:failure');
 }`}</pre>
-            </div>
-
-            {/* Raw node output (if available) */}
-            {(raw_stderr || raw_stdout) && (
-              <div style={{ textAlign: 'left', maxWidth: 520, margin: '0 auto' }}>
-                {raw_stderr && (
-                  <>
-                    <p style={{ fontSize: 11, fontWeight: 700, color: '#b91c1c', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
-                      ❌ Node.js stderr (error output)
-                    </p>
-                    <pre style={{
-                      fontSize: 11, fontFamily: "'DM Mono','Fira Code',monospace",
-                      background: '#1a0000', color: '#f87171', padding: '10px 14px',
-                      borderRadius: th.radiusSm, marginBottom: 14, lineHeight: 1.65,
-                      whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto',
-                    }}>{raw_stderr}</pre>
-                  </>
-                )}
-                {raw_stdout && (
-                  <>
-                    <p style={{ fontSize: 11, fontWeight: 700, color: th.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
-                      📄 Node.js stdout (raw output)
-                    </p>
-                    <pre style={{
-                      fontSize: 11, fontFamily: "'DM Mono','Fira Code',monospace",
-                      background: '#0f0e26', color: '#c8c3ff', padding: '10px 14px',
-                      borderRadius: th.radiusSm, margin: 0, lineHeight: 1.65,
-                      whiteSpace: 'pre-wrap', wordBreak: 'break-all', maxHeight: 200, overflow: 'auto',
-                    }}>{raw_stdout}</pre>
-                  </>
-                )}
               </div>
+            )}
+
+            {/* Terminal Drawer */}
+            {(raw_stderr || raw_stdout) && (
+              <TerminalDrawer
+                stdout={raw_stdout}
+                stderr={raw_stderr}
+                label={isDotNet ? 'dotnet' : 'node'}
+              />
             )}
           </div>
         </div>

@@ -5,10 +5,10 @@ import FileUpload from './components/FileUpload';
 import ZipFileExplorer from './components/ZipFileExplorer';
 import RichTextQuestionInput from './components/RichTextQuestionInput';
 import ResultsDisplay from './components/ResultsDisplay';
-import CodeSpace from './components/CodeSpace';
+import CodeSpace, { DotNetCodeSpace } from './components/CodeSpace';
 import LoaderOverlay from './components/LoaderOverlay';
 import TestcaseExcelGenerator from './components/TestcaseExcelGenerator'; // adjust path if needed
-import { startPipeline, getStatus, getReport, downloadExcelReport, createLogSocket, cancelPipeline, getDescription, importQuestion, getImportedZip, searchQuestionBanks, questionsInBank } from './services/api';
+import { startPipeline, getStatus, getReport, downloadExcelReport, createLogSocket, cancelPipeline, getDescription, importQuestion, getImportedZip, searchQuestionBanks, questionsInBank, previewTestcases } from './services/api';
 
 /* ── Design tokens ─────────────────────────────────────────────────────────── */
 const T = {
@@ -114,44 +114,368 @@ const NodeStatusIcon = ({ status }) => {
   }} />;
 };
 
-/* ── NavItem ───────────────────────────────────────────────────────────────── */
-const NavItem = ({ label, active, onClick }) => (
-  <button
-    onClick={onClick}
-    style={{
-      padding: '7px 16px',
-      borderRadius: '8px',
-      border: active ? `1px solid ${T.borderHover}` : '1px solid transparent',
-      background: active ? T.indigoLight : 'transparent',
-      color: active ? T.indigo : T.textSecondary,
-      fontSize: '13px',
-      fontWeight: active ? '700' : '500',
-      fontFamily: "'DM Sans', sans-serif",
-      cursor: 'pointer',
-      transition: 'all 0.15s',
-      whiteSpace: 'nowrap',
-    }}
-    onMouseEnter={e => {
-      if (!active) {
-        e.currentTarget.style.background = T.indigoLight;
-        e.currentTarget.style.color = T.indigo;
-      }
-    }}
-    onMouseLeave={e => {
-      if (!active) {
-        e.currentTarget.style.background = 'transparent';
-        e.currentTarget.style.color = T.textSecondary;
-      }
-    }}
-  >
-    {label}
-  </button>
-);
+/* ── NavDropdown ───────────────────────────────────────────────────────────── */
+const NAV_PAGES = [
+  { key: 'qc',       icon: '⚡', label: 'QC Analyse'       },
+  { key: 'testcase', icon: '📊', label: 'Testcase Report'  },
+  { key: 'viewer',   icon: '🔍', label: 'Testcase Viewer'  },
+];
+
+const NavDropdown = ({ activePage, setActivePage }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const current = NAV_PAGES.find(p => p.key === activePage) || NAV_PAGES[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        onClick={() => setOpen(v => !v)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '8px',
+          padding: '7px 14px', borderRadius: '10px', cursor: 'pointer',
+          background: open ? T.indigoLight : T.bg,
+          border: `1px solid ${open ? T.borderHover : T.border}`,
+          color: open ? T.indigo : T.textPrimary,
+          fontSize: '13px', fontWeight: '700',
+          fontFamily: "'DM Sans', sans-serif",
+          transition: 'all 0.15s',
+        }}
+      >
+        <span>{current.icon}</span>
+        <span>{current.label}</span>
+        <span style={{ fontSize: '10px', color: open ? T.indigo : T.textMuted, marginLeft: 2 }}>
+          {open ? '▲' : '▼'}
+        </span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 6px)', left: 0,
+          zIndex: 200, minWidth: '200px',
+          background: T.surface, border: `1px solid ${T.borderHover}`,
+          borderRadius: T.radiusSm, boxShadow: T.shadowMd, overflow: 'hidden',
+        }}>
+          {NAV_PAGES.map((page, i) => (
+            <button
+              key={page.key}
+              onClick={() => { setActivePage(page.key); setOpen(false); }}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '10px 16px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                background: activePage === page.key ? T.indigoLight : T.surface,
+                color: activePage === page.key ? T.indigo : T.textPrimary,
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: '13px', fontWeight: activePage === page.key ? '700' : '500',
+                borderBottom: i < NAV_PAGES.length - 1 ? `1px solid ${T.border}` : 'none',
+                transition: 'background 0.12s',
+              }}
+            >
+              <span style={{ fontSize: '15px' }}>{page.icon}</span>
+              {page.label}
+              {activePage === page.key && <span style={{ marginLeft: 'auto', fontSize: '11px' }}>✓</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
+/* ── TestcaseViewerPage ─────────────────────────────────────────────────────── */
+function TestcaseViewerPage() {
+  const [token,            setToken]            = useState(() => localStorage.getItem('examly_token') || '');
+  const [tokenOpen,        setTokenOpen]        = useState(false);
+  const [searchTerm,       setSearchTerm]       = useState('');
+  const [searching,        setSearching]        = useState(false);
+  const [searchResults,    setSearchResults]    = useState([]);
+  const [searchError,      setSearchError]      = useState('');
+  const [selectedBank,     setSelectedBank]     = useState(null);
+  const [questions,        setQuestions]        = useState([]);
+  const [loadingQ,         setLoadingQ]         = useState(false);
+  const [questionsError,   setQuestionsError]   = useState('');
+  const [selectedQ,        setSelectedQ]        = useState(null);
+  const [selectedQId,      setSelectedQId]      = useState('');
+  const [importing,        setImporting]        = useState(false);
+  const [importErr,        setImportErr]        = useState('');
+  const [testcaseFiles,    setTestcaseFiles]    = useState(null); // { filename: content }
+  const [fileType,         setFileType]         = useState('nunit'); // 'nunit' | 'junit'
+  const [activeFile,       setActiveFile]       = useState('');
+  const [copied,           setCopied]           = useState('');
+  const tokenRef = useRef(null);
+
+  useEffect(() => {
+    if (!tokenOpen) return;
+    const h = (e) => { if (tokenRef.current && !tokenRef.current.contains(e.target)) setTokenOpen(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [tokenOpen]);
+
+  const handleSearch = async () => {
+    if (!token.trim()) { setSearchError('Set your JWT token first.'); setTokenOpen(true); return; }
+    if (!searchTerm.trim()) { setSearchError('Enter a search term.'); return; }
+    setSearching(true); setSearchResults([]); setSelectedBank(null);
+    setQuestions([]); setSelectedQ(null); setSearchError(''); setTestcaseFiles(null);
+    try {
+      const res = await searchQuestionBanks(searchTerm.trim(), token.trim());
+      if (res.error) setSearchError(res.error);
+      else setSearchResults(res.questionbanks || []);
+    } catch (e) { setSearchError(e.message); }
+    setSearching(false);
+  };
+
+  const handleSelectBank = async (bank) => {
+    setSelectedBank(bank); setQuestions([]); setSelectedQ(null); setQuestionsError('');
+    setLoadingQ(true);
+    try {
+      const res = await questionsInBank(bank.qb_id, token.trim());
+      if (res.error) setQuestionsError(res.error);
+      else setQuestions(res.questions || []);
+    } catch (e) { setQuestionsError(e.message); }
+    setLoadingQ(false);
+  };
+
+  const handleFetch = async () => {
+    if (!selectedQId) return;
+    setImporting(true); setImportErr(''); setTestcaseFiles(null);
+    try {
+      // Import question to get the ZIP on disk
+      const res = await importQuestion(selectedQId, token.trim(), selectedQ?.question_data || '');
+      if (res.error) { setImportErr(res.error); setImporting(false); return; }
+      // Extract testcases from the ZIP
+      const raw = await previewTestcases();
+      if (raw.error) { setImportErr(raw.error); setImporting(false); return; }
+      const { __type__, ...files } = raw;
+      const keys = Object.keys(files);
+      if (!keys.length) { setImportErr('No testcase files found in this ZIP.'); setImporting(false); return; }
+      setTestcaseFiles(files);
+      setFileType(__type__ || 'nunit');
+      setActiveFile(keys[0]);
+    } catch (e) { setImportErr(e.message); }
+    setImporting(false);
+  };
+
+  const handleCopy = (fname) => {
+    navigator.clipboard.writeText(testcaseFiles[fname] || '').then(() => {
+      setCopied(fname);
+      setTimeout(() => setCopied(''), 1800);
+    });
+  };
+
+  const handleDownload = (fname) => {
+    const blob = new Blob([testcaseFiles[fname] || ''], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    a.click();
+  };
+
+  const handleDownloadAll = () => {
+    if (!testcaseFiles) return;
+    Object.entries(testcaseFiles).forEach(([fname, content]) => {
+      const blob = new Blob([content], { type: 'text/plain' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = fname;
+      a.click();
+    });
+  };
+
+  const fileList = testcaseFiles ? Object.keys(testcaseFiles) : [];
+  const activeContent = testcaseFiles?.[activeFile] || '';
+  const lines = activeContent.split('\n');
+
+  const colorLine = (line) => {
+    if (/^\s*(\/\/|\/\*|\*)/.test(line))             return '#6b7280';
+    if (fileType === 'junit') {
+      if (/@Test|@Order|@BeforeAll|@AfterAll|@BeforeEach|@AfterEach|@TestMethodOrder/.test(line)) return '#a78bfa';
+      if (/\b(public|private|protected|static|void|class|import|package|new|return|if|else|for|throws|try|catch|finally|String|int|boolean|List|Map|throw)\b/.test(line)) return '#60a5fa';
+      if (/"[^"]*"/.test(line))                      return '#34d399';
+      if (/assert|Assert|assertTrue|assertEquals|assertNotNull/.test(line)) return '#fbbf24';
+    } else {
+      if (/\[Test\]|\[TestFixture\]|\[SetUp\]|\[TearDown\]|\[Order\]/.test(line)) return '#a78bfa';
+      if (/\b(public|private|protected|static|void|class|namespace|using|new|return|if|else|foreach|var|string|int|bool|List|override)\b/.test(line)) return '#60a5fa';
+      if (/"[^"]*"/.test(line))                      return '#34d399';
+      if (/Assert\.|Console\./.test(line))           return '#fbbf24';
+    }
+    return '#e2e8f0';
+  };
+
+  return (
+    <main style={{ maxWidth: 1100, margin: '0 auto', padding: '36px 28px 60px' }}>
+      <div style={{ marginBottom: 28 }}>
+        <h2 style={{ fontFamily: "'Syne',sans-serif", fontSize: 22, fontWeight: 800, color: T.textPrimary, margin: '0 0 4px', letterSpacing: '-0.03em' }}>
+          Testcase Viewer
+        </h2>
+        <p style={{ fontSize: 13, color: T.textMuted, margin: 0 }}>
+          Search a question bank, select a question, and view its NUnit testcase files.
+        </p>
+      </div>
+
+      {/* ── Search panel ── */}
+      <div style={{ ...cardStyle, marginBottom: 20 }}>
+        {/* Search row */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+          <input
+            type="text"
+            placeholder="Search question bank…"
+            value={searchTerm}
+            onChange={e => setSearchTerm(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && handleSearch()}
+            style={{ flex: 1, padding: '8px 12px', borderRadius: T.radiusSm, border: `1px solid ${T.border}`, background: T.bg, color: T.textPrimary, fontSize: 13, fontFamily: "'DM Sans',sans-serif", outline: 'none' }}
+          />
+          <button onClick={handleSearch} disabled={searching} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '8px 16px', borderRadius: T.radiusSm, border: 'none', background: searching ? '#D1D5DB' : `linear-gradient(135deg,${T.indigo},${T.indigoMid})`, color: '#fff', cursor: searching ? 'not-allowed' : 'pointer', fontSize: 12, fontWeight: 700, fontFamily: "'DM Sans',sans-serif", whiteSpace: 'nowrap' }}>
+            {searching ? <><span style={{ display:'inline-block', width:10, height:10, border:'2px solid rgba(255,255,255,0.4)', borderTopColor:'#fff', borderRadius:'50%', animation:'spin 0.8s linear infinite' }} /> Searching…</> : '🔍 Search'}
+          </button>
+          {/* Token */}
+          <div ref={tokenRef} style={{ position: 'relative' }}>
+            <button onClick={() => setTokenOpen(v => !v)} style={{ display:'flex', alignItems:'center', gap:5, padding:'8px 13px', borderRadius:T.radiusSm, border:`1px solid ${tokenOpen?T.borderHover:T.border}`, background:tokenOpen?T.indigoLight:T.surface, color:tokenOpen?T.indigo:T.textSecondary, cursor:'pointer', fontSize:12, fontWeight:700, fontFamily:"'DM Sans',sans-serif" }}>
+              🔑 Token <span style={{ fontSize:10 }}>{tokenOpen?'▲':'▼'}</span>
+            </button>
+            {tokenOpen && (
+              <div style={{ position:'absolute', top:'calc(100% + 6px)', right:0, zIndex:200, width:300, background:T.surface, border:`1px solid ${T.borderHover}`, borderRadius:T.radiusSm, boxShadow:T.shadowMd, padding:'14px 16px', display:'flex', flexDirection:'column', gap:8 }}>
+                <label style={{ fontSize:11, fontWeight:700, color:T.textMuted, textTransform:'uppercase', letterSpacing:'0.07em', fontFamily:"'DM Sans',sans-serif" }}>JWT Token</label>
+                <textarea rows={3} placeholder="eyJhbGci…" value={token} onChange={e => setToken(e.target.value)} style={{ width:'100%', boxSizing:'border-box', padding:'8px 10px', borderRadius:T.radiusSm, border:`1px solid ${T.border}`, background:T.bg, color:T.textPrimary, fontSize:11, fontFamily:"'DM Mono',monospace", outline:'none', resize:'vertical' }} />
+                <button onClick={() => { localStorage.setItem('examly_token', token.trim()); setTokenOpen(false); }} style={{ alignSelf:'flex-end', padding:'7px 16px', borderRadius:T.radiusSm, border:'none', background:`linear-gradient(135deg,${T.indigo},${T.indigoMid})`, color:'#fff', cursor:'pointer', fontSize:12, fontWeight:700, fontFamily:"'DM Sans',sans-serif" }}>💾 Save</button>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {searchError && <p style={{ margin:'0 0 10px', fontSize:12, color:T.error }}>{searchError}</p>}
+
+        {/* Bank list */}
+        {searchResults.length > 0 && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize:11, fontWeight:600, color:T.textMuted, marginBottom:6 }}>{searchResults.length} bank(s) found — click to load questions</div>
+            <div style={{ display:'flex', flexDirection:'column', gap:4, maxHeight:160, overflowY:'auto' }}>
+              {searchResults.map(bank => {
+                const sel = selectedBank?.qb_id === bank.qb_id;
+                return (
+                  <div key={bank.qb_id} onClick={() => handleSelectBank(bank)} style={{ padding:'9px 12px', borderRadius:T.radiusSm, cursor:'pointer', background:sel?T.indigoLight:T.bg, border:`1px solid ${sel?T.borderHover:T.border}`, transition:'all 0.12s' }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:sel?T.indigo:T.textPrimary, fontFamily:"'DM Sans',sans-serif" }}>{bank.qb_name}</div>
+                    <div style={{ fontSize:11, color:T.textMuted, fontFamily:"'DM Mono',monospace" }}>{bank.questionCount??'?'} questions · {bank.qb_id}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Question list */}
+        {selectedBank && (
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize:11, fontWeight:700, color:T.textMuted, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.06em' }}>Questions in <span style={{ color:T.indigo, textTransform:'none' }}>{selectedBank.qb_name}</span></div>
+            {loadingQ && <div style={{ fontSize:12, color:T.textMuted, padding:8 }}>Loading…</div>}
+            {questionsError && <p style={{ margin:'4px 0', fontSize:12, color:T.error }}>{questionsError}</p>}
+            {!loadingQ && questions.length > 0 && (
+              <div style={{ display:'flex', flexDirection:'column', gap:4, maxHeight:200, overflowY:'auto' }}>
+                {questions.map((q, i) => {
+                  const qId = q.question_id || q.id || '';
+                  const qName = q.question_name || `Question ${i+1}`;
+                  const sel = selectedQ?.question_id === qId;
+                  return (
+                    <div key={qId||i} onClick={() => { setSelectedQ(q); setSelectedQId(qId); setTestcaseFiles(null); setImportErr(''); }} style={{ padding:'9px 12px', borderRadius:T.radiusSm, cursor:'pointer', background:sel?T.indigoLight:T.bg, border:`1px solid ${sel?T.borderHover:T.border}`, display:'flex', alignItems:'center', justifyContent:'space-between', gap:8, transition:'all 0.12s' }}>
+                      <div style={{ minWidth:0 }}>
+                        <div style={{ fontSize:13, fontWeight:600, color:sel?T.indigo:T.textPrimary, fontFamily:"'DM Sans',sans-serif", whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis' }}>{qName}</div>
+                        {qId && <div style={{ fontSize:10, color:T.textMuted, fontFamily:"'DM Mono',monospace" }}>{qId}</div>}
+                      </div>
+                      {sel && <span style={{ fontSize:11, fontWeight:700, color:T.indigo, flexShrink:0 }}>✓</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Fetch button */}
+        {selectedQ && (
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', gap:10, padding:'10px 12px', borderRadius:T.radiusSm, background:T.indigoLight, border:`1px solid ${T.borderHover}` }}>
+            <div style={{ minWidth:0 }}>
+              <div style={{ fontSize:11, fontWeight:700, color:T.indigo }}>Ready to fetch testcases</div>
+              <div style={{ fontSize:11, color:T.textSecondary, fontFamily:"'DM Mono',monospace", overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{selectedQId}</div>
+            </div>
+            <button onClick={handleFetch} disabled={importing} style={{ display:'flex', alignItems:'center', gap:5, padding:'9px 20px', borderRadius:T.radiusSm, border:'none', background:importing?'#D1D5DB':`linear-gradient(135deg,${T.indigo},${T.indigoMid})`, color:'#fff', cursor:importing?'not-allowed':'pointer', fontSize:13, fontWeight:700, fontFamily:"'DM Sans',sans-serif", whiteSpace:'nowrap', flexShrink:0 }}>
+              {importing ? <><span style={{ display:'inline-block', width:11, height:11, border:'2px solid rgba(255,255,255,0.4)', borderTopColor:'#fff', borderRadius:'50%', animation:'spin 0.8s linear infinite' }} /> Fetching…</> : '📂 Fetch Testcases'}
+            </button>
+          </div>
+        )}
+
+        {importErr && <p style={{ margin:'10px 0 0', fontSize:12, color:T.error }}>⚠ {importErr}</p>}
+      </div>
+
+      {/* ── Testcase file viewer ── */}
+      {testcaseFiles && fileList.length > 0 && (
+        <div style={{ background:'#11111b', borderRadius:12, border:'1px solid #313244', overflow:'hidden', fontFamily:"'DM Mono','Fira Code',monospace" }}>
+          {/* Header bar */}
+          <div style={{ display:'flex', alignItems:'center', gap:8, padding:'10px 16px', background:'#1e1e2e', borderBottom:'1px solid #313244', flexWrap:'wrap' }}>
+            <span style={{ width:11, height:11, borderRadius:'50%', background:'#ff5f57', display:'inline-block' }} />
+            <span style={{ width:11, height:11, borderRadius:'50%', background:'#febc2e', display:'inline-block' }} />
+            <span style={{ width:11, height:11, borderRadius:'50%', background:'#28c840', display:'inline-block' }} />
+            <span style={{ fontSize:12, color:'#a6adc8', fontWeight:700, marginLeft:8, flex:1 }}>
+              {fileType === 'junit' ? 'JUnit' : 'NUnit'} Testcase Files
+              <span style={{ marginLeft:8, fontSize:10, background: fileType==='junit'?'rgba(251,191,36,0.15)':'rgba(167,139,250,0.15)', color: fileType==='junit'?'#fbbf24':'#a78bfa', borderRadius:4, padding:'1px 7px', fontWeight:600 }}>
+                {fileType === 'junit' ? 'Java' : 'C#'}
+              </span>
+              <span style={{ marginLeft:10, fontSize:10, color:'#585b70', fontWeight:400 }}>{fileList.length} file(s)</span>
+            </span>
+            <button onClick={handleDownloadAll} style={{ fontSize:11, background:'#1e1e2e', color:'#a6adc8', border:'1px solid #313244', borderRadius:6, padding:'4px 12px', cursor:'pointer' }}>
+              ⬇ Download All
+            </button>
+          </div>
+
+          {/* Tab bar */}
+          <div style={{ display:'flex', gap:0, background:'#181825', borderBottom:'1px solid #1e1e2e', overflowX:'auto' }}>
+            {fileList.map(fname => (
+              <button
+                key={fname}
+                onClick={() => setActiveFile(fname)}
+                style={{ padding:'8px 16px', border:'none', borderBottom:`2px solid ${activeFile===fname?T.indigo:'transparent'}`, background:activeFile===fname?'#11111b':'transparent', color:activeFile===fname?'#c8c3ff':'#585b70', fontSize:12, fontWeight:activeFile===fname?700:400, cursor:'pointer', whiteSpace:'nowrap', transition:'all 0.15s', fontFamily:"'DM Mono',monospace" }}
+              >
+                {fname}
+              </button>
+            ))}
+          </div>
+
+          {/* Toolbar */}
+          <div style={{ display:'flex', alignItems:'center', padding:'5px 12px', background:'#181825', borderBottom:'1px solid #1e1e2e', gap:8 }}>
+            <span style={{ fontSize:10, color:'#45475a', flex:1 }}>{activeFile} · {lines.length} lines</span>
+            <button onClick={() => handleCopy(activeFile)} style={{ fontSize:10, background:copied===activeFile?'#1e3a2f':'#1e1e2e', color:copied===activeFile?'#34d399':'#585b70', border:'1px solid #313244', borderRadius:4, padding:'3px 10px', cursor:'pointer', transition:'all 0.2s' }}>
+              {copied === activeFile ? '✓ copied' : 'copy'}
+            </button>
+            <button onClick={() => handleDownload(activeFile)} style={{ fontSize:10, background:'#1e1e2e', color:'#585b70', border:'1px solid #313244', borderRadius:4, padding:'3px 10px', cursor:'pointer' }}>
+              ⬇ download
+            </button>
+          </div>
+
+          {/* Code lines */}
+          <div style={{ maxHeight:560, overflowY:'auto', padding:'10px 0' }}>
+            {lines.map((line, i) => (
+              <div key={i} style={{ display:'flex', alignItems:'flex-start', padding:'0 16px', lineHeight:1.7 }}>
+                <span style={{ minWidth:36, textAlign:'right', marginRight:16, fontSize:10, color:'#313244', userSelect:'none', flexShrink:0, paddingTop:1 }}>{i+1}</span>
+                <span style={{ fontSize:12, color:colorLine(line), whiteSpace:'pre-wrap', wordBreak:'break-all', flex:1 }}>{line||' '}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </main>
+  );
+}
 
 /* ── App ────────────────────────────────────────────────────────────────────── */
 function App() {
-  const [activePage,    setActivePage]    = useState('qc');        // 'qc' | 'testcase'
-  const [resultTab,     setResultTab]     = useState('results');   // 'results' | 'code'
+  const [activePage,      setActivePage]      = useState('qc');        // 'qc' | 'testcase'
+  const [projectType,     setProjectType]     = useState('html');      // 'html' | 'dotnet'
+  const [projectTypeOpen, setProjectTypeOpen] = useState(false);
+  const [resultTab,       setResultTab]       = useState('results');   // 'results' | 'code'
   const [zipFile,       setZipFile]       = useState(null);
   const [selectedFiles, setSelectedFiles] = useState({ testCases: [] });
   const [description,   setDescription]   = useState('');
@@ -179,11 +503,12 @@ function App() {
   const [qbSelectedQuestion, setQbSelectedQuestion] = useState(null);
   const [tokenDropdownOpen,  setTokenDropdownOpen]  = useState(false);
 
-  const logsEndRef  = useRef(null);
-  const wsRef       = useRef(null);
-  const pollRef     = useRef(null);
-  const stageRef    = useRef('idle');
-  const tokenBtnRef = useRef(null);
+  const logsEndRef     = useRef(null);
+  const wsRef          = useRef(null);
+  const pollRef        = useRef(null);
+  const stageRef       = useRef('idle');
+  const tokenBtnRef    = useRef(null);
+  const projectTypeRef = useRef(null);
 
   useEffect(() => { stageRef.current = stage; }, [stage]);
   useEffect(() => { logsEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [logs]);
@@ -206,6 +531,16 @@ function App() {
     document.addEventListener('mousedown', handleOutside);
     return () => document.removeEventListener('mousedown', handleOutside);
   }, [tokenDropdownOpen]);
+
+  // Close project type dropdown when clicking outside
+  useEffect(() => {
+    if (!projectTypeOpen) return;
+    const handler = (e) => {
+      if (projectTypeRef.current && !projectTypeRef.current.contains(e.target)) setProjectTypeOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [projectTypeOpen]);
 
   const stopPolling = () => {
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
@@ -360,7 +695,7 @@ function App() {
 
     if (!zipFile)
       return setError('Please upload a ZIP file');
-    if (selectedFiles.testCases.length === 0)
+    if (projectType === 'html' && selectedFiles.testCases.length === 0)
       return setError('Please select at least one Puppeteer test file from the ZIP');
     const plainText = description?.replace(/<[^>]+>/g, '').trim();
     if (!plainText)
@@ -372,11 +707,11 @@ function App() {
     setReport(null);
 
     try {
-      const testcaseContent = selectedFiles.testCases
-        .map(f => f.content)
-        .join('\n\n');
+      const testcaseContent = projectType === 'dotnet'
+        ? ''
+        : selectedFiles.testCases.map(f => f.content).join('\n\n');
 
-      const res = await startPipeline(testcaseContent, description, zipFile);
+      const res = await startPipeline(testcaseContent, description, zipFile, projectType);
 
       if (res.status === 'already_running') {
         setError('Pipeline is already running. Please wait.');
@@ -424,11 +759,9 @@ function App() {
     }
   };
 
-  const canSubmit =
-    !!zipFile &&
-    selectedFiles.testCases.length > 0 &&
-    description?.replace(/<[^>]+>/g, '').trim().length > 0 &&
-    stage !== 'running';
+  const canSubmit = projectType === 'dotnet'
+    ? !!zipFile && description?.replace(/<[^>]+>/g, '').trim().length > 0 && stage !== 'running'
+    : !!zipFile && selectedFiles.testCases.length > 0 && description?.replace(/<[^>]+>/g, '').trim().length > 0 && stage !== 'running';
 
   const currentNode = detectCurrentNode(logs);
   const isDone      = stage === 'done';
@@ -508,38 +841,82 @@ function App() {
 
             {/* Right side: nav + badge */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
-              {/* Nav menu */}
-              <nav style={{
-                display: 'flex', alignItems: 'center', gap: '4px',
-                background: T.bg, border: `1px solid ${T.border}`,
-                borderRadius: '10px', padding: '4px',
-              }}>
-                <NavItem
-                  label="QC Analyse"
-                  active={activePage === 'qc'}
-                  onClick={() => setActivePage('qc')}
-                />
-                <NavItem
-                  label="Testcase Report"
-                  active={activePage === 'testcase'}
-                  onClick={() => setActivePage('testcase')}
-                />
-              </nav>
+              {/* Nav dropdown */}
+              <NavDropdown activePage={activePage} setActivePage={setActivePage} />
 
-              {/* Tech badge */}
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: '7px',
-                padding: '7px 14px',
-                background: T.warningLight, border: `1px solid ${T.warningBorder}`,
-                borderRadius: '999px',
-              }}>
-                <span style={{ fontSize: '15px' }}>🌐</span>
-                <span style={{
-                  fontSize: '12px', fontWeight: '700', color: '#92400E',
-                  letterSpacing: '0.04em', textTransform: 'uppercase',
-                }}>
-                  HTML / CSS / JS
-                </span>
+              {/* Project type dropdown */}
+              <div ref={projectTypeRef} style={{ position: 'relative' }}>
+                <button
+                  onClick={() => setProjectTypeOpen(v => !v)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '7px',
+                    padding: '7px 14px',
+                    background: projectTypeOpen ? T.indigoLight : T.warningLight,
+                    border: `1px solid ${projectTypeOpen ? T.borderHover : T.warningBorder}`,
+                    borderRadius: '999px', cursor: 'pointer',
+                    fontFamily: "'DM Sans', sans-serif",
+                    transition: 'all 0.15s',
+                  }}
+                >
+                  <span style={{ fontSize: '15px' }}>
+                    {projectType === 'html' ? '🌐' : '⚙️'}
+                  </span>
+                  <span style={{
+                    fontSize: '12px', fontWeight: '700',
+                    color: projectTypeOpen ? T.indigo : '#92400E',
+                    letterSpacing: '0.04em', textTransform: 'uppercase',
+                  }}>
+                    {projectType === 'html' ? 'HTML / CSS / JS' : '.NET Collections'}
+                  </span>
+                  <span style={{ fontSize: '10px', color: projectTypeOpen ? T.indigo : '#92400E' }}>
+                    {projectTypeOpen ? '▲' : '▼'}
+                  </span>
+                </button>
+
+                {projectTypeOpen && (
+                  <div style={{
+                    position: 'absolute', top: 'calc(100% + 6px)', right: 0,
+                    zIndex: 200, minWidth: '200px',
+                    background: T.surface, border: `1px solid ${T.borderHover}`,
+                    borderRadius: T.radiusSm, boxShadow: T.shadowMd,
+                    overflow: 'hidden',
+                  }}>
+                    {[
+                      { key: 'html',   icon: '🌐', label: 'HTML / CSS / JS'  },
+                      { key: 'dotnet', icon: '⚙️', label: '.NET MS1 (Collections)' },
+                    ].map(opt => (
+                      <button
+                        key={opt.key}
+                        onClick={() => {
+                          setProjectType(opt.key);
+                          setProjectTypeOpen(false);
+                          // reset form state when switching
+                          setZipFile(null);
+                          setSelectedFiles({ testCases: [] });
+                          setDescription('');
+                          setReport(null);
+                          setError(null);
+                          setStage('idle');
+                          setLogs([]);
+                        }}
+                        style={{
+                          width: '100%', display: 'flex', alignItems: 'center', gap: '10px',
+                          padding: '10px 16px', border: 'none', cursor: 'pointer', textAlign: 'left',
+                          background: projectType === opt.key ? T.indigoLight : T.surface,
+                          color: projectType === opt.key ? T.indigo : T.textPrimary,
+                          fontFamily: "'DM Sans', sans-serif",
+                          fontSize: '13px', fontWeight: projectType === opt.key ? '700' : '500',
+                          borderBottom: opt.key === 'html' ? `1px solid ${T.border}` : 'none',
+                          transition: 'background 0.12s',
+                        }}
+                      >
+                        <span style={{ fontSize: '16px' }}>{opt.icon}</span>
+                        {opt.label}
+                        {projectType === opt.key && <span style={{ marginLeft: 'auto', fontSize: '11px' }}>✓</span>}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -635,6 +1012,11 @@ function App() {
       {/* ── Testcase Report Page ─────────────────────────────────────────────── */}
       {activePage === 'testcase' && (
         <TestcaseExcelGenerator />
+      )}
+
+      {/* ── Testcase Viewer Page ─────────────────────────────────────────────── */}
+      {activePage === 'viewer' && (
+        <TestcaseViewerPage />
       )}
 
       {/* ── QC Analyse Page ─────────────────────────────────────────────────── */}
@@ -765,7 +1147,6 @@ function App() {
                   >
                     {tab.icon}
                     {tab.label}
-                    {/* Badge */}
                     {tab.key === 'results' && report?.summary && (
                       <span style={{
                         padding: '1px 7px', borderRadius: '999px', fontSize: '10px', fontWeight: '700',
@@ -780,12 +1161,12 @@ function App() {
               </div>
 
               {/* ── Tab content ──────────────────────────────────────────────── */}
-              {resultTab === 'results' && <ResultsDisplay report={report} />}
-              {resultTab === 'code' && (
-                <CodeSpace
-                  onReportUpdate={setReport}
-                  initialReport={report}
-                />
+              {resultTab === 'results' && <ResultsDisplay report={report} projectType={report?.project_type || projectType} />}
+              {resultTab === 'code' && (report?.project_type || projectType) === 'dotnet' && (
+                <DotNetCodeSpace initialReport={report} />
+              )}
+              {resultTab === 'code' && (report?.project_type || projectType) !== 'dotnet' && (
+                <CodeSpace onReportUpdate={setReport} initialReport={report} />
               )}
             </div>
 
@@ -1174,7 +1555,7 @@ function App() {
                     />
                   </div>
 
-                  {zipFile && (
+                  {zipFile && projectType === 'html' && (
                     <div className="step-card" style={{ border: `1px solid ${T.border}`, borderRadius: T.radius, padding: '20px' }}>
                       <StepLabel num="2" text="Select Test File" />
                       <ZipFileExplorer
@@ -1186,12 +1567,22 @@ function App() {
                     </div>
                   )}
 
+                  {zipFile && projectType === 'dotnet' && (
+                    <div style={{ padding: '12px 16px', background: T.successLight, border: `1px solid ${T.successBorder}`, borderRadius: T.radiusSm, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ fontSize: '16px' }}>⚙️</span>
+                      <div>
+                        <div style={{ fontSize: '13px', fontWeight: '700', color: '#065F46' }}>Testcases auto-detected from ZIP</div>
+                        <div style={{ fontSize: '11px', color: '#047857', marginTop: '2px' }}>NUnit tests embedded in <code style={{ fontFamily: 'monospace', background: 'rgba(6,95,70,0.1)', padding: '0 4px', borderRadius: '3px' }}>nunit/run.sh</code> — no manual file selection needed</div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="step-card" style={{ border: `1px solid ${T.border}`, borderRadius: T.radius, padding: '20px' }}>
                     <StepLabel num={zipFile ? '3' : '2'} text="Project Description" />
                     <RichTextQuestionInput value={description} onChange={setDescription} />
                   </div>
 
-                  {selectedFiles.testCases.length > 0 && (
+                  {projectType === 'html' && selectedFiles.testCases.length > 0 && (
                     <div>
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: '6px',

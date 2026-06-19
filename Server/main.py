@@ -49,14 +49,16 @@ from config.settings import (
     PUBLIC_DIR,
     VERBOSE,
 )
-from tools.parser_tool  import read_testcase, read_description
-from tools.ocr_tool     import extract_base64_images_from_text
-from tools.text_cleaner import strip_base64_images
-from tools.test_runner  import TestRunner
-from tools.excel_reporter import generate_excel_report
-from agents.solution_generator_agent  import SolutionGeneratorAgent
-from agents.failure_analyzer_agent    import FailureAnalyzerAgent
-from agents.description_scorer_agent  import DescriptionScorerAgent
+from tools.parser_tool        import read_testcase, read_description
+from tools.ocr_tool           import extract_base64_images_from_text
+from tools.text_cleaner       import strip_base64_images
+from tools.test_runner        import TestRunner
+from tools.dotnet_test_runner import DotNetTestRunner
+from tools.excel_reporter     import generate_excel_report
+from agents.solution_generator_agent        import SolutionGeneratorAgent
+from agents.dotnet_solution_generator_agent import DotNetSolutionGeneratorAgent
+from agents.failure_analyzer_agent          import FailureAnalyzerAgent
+from agents.description_scorer_agent        import DescriptionScorerAgent
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -72,6 +74,9 @@ logger = logging.getLogger("qc_pipeline")
 # ─────────────────────────────────────────────────────────────────────────────
 
 class PipelineState(TypedDict, total=False):
+    # ── Project type ──────────────────────────────────────────────────────────
+    project_type:        str   # 'html' | 'dotnet'
+
     # ── Path hints ────────────────────────────────────────────────────────────
     testcase_path:       str
     description_path:    str
@@ -191,7 +196,6 @@ def node_generate_solution(state: PipelineState) -> PipelineState:
         files = agent.generate(
             description_content = state["description_content"],
             ocr_text            = state.get("ocr_text", ""),
-            testcase_content    = state["testcase_content"],
             public_dir          = pub_dir,
             image_urls          = state.get("image_urls", []),
         )
@@ -336,6 +340,7 @@ def node_generate_excel_report(state: PipelineState) -> PipelineState:
         "test_results":       test_results,
         "failure_analysis":   failure_analysis,
         "description_score":  state.get("description_score", {}),
+        "project_type":       state.get("project_type", "html"),
     }
     # Include raw node output when 0 tests parsed — helps user diagnose format issues
     if test_summary.get("total", 0) == 0:
@@ -364,6 +369,76 @@ def node_generate_excel_report(state: PipelineState) -> PipelineState:
     return state
 
 
+def node_generate_dotnet_solution(state: PipelineState) -> PipelineState:
+    """Node 3 (dotnet) — AI generates Program.cs + domain classes from description."""
+    logger.info("═══ Node: generate_solution (DotNet Agent) ═══")
+    if state.get("error"):
+        return state
+    try:
+        agent = DotNetSolutionGeneratorAgent()
+        files = agent.generate(
+            description_content = state["description_content"],
+            ocr_text            = state.get("ocr_text", ""),
+            image_urls          = state.get("image_urls", []),
+        )
+        logger.info("DotNet solution generated: %s", list(files.keys()))
+        # Persist generated .cs files so Code Space can display them
+        save_dir = "data/dotnet_solution"
+        os.makedirs(save_dir, exist_ok=True)
+        # Clear old files first
+        for f in os.listdir(save_dir):
+            if f.endswith(".cs"):
+                os.remove(os.path.join(save_dir, f))
+        for fname, content in files.items():
+            with open(os.path.join(save_dir, fname), "w", encoding="utf-8") as fh:
+                fh.write(content)
+        logger.info("Saved dotnet solution to %s: %s", save_dir, list(files.keys()))
+        return {**state, "generated_files": files}
+    except Exception as e:
+        logger.error("generate_dotnet_solution failed: %s", e)
+        return {**state, "error": str(e)}
+
+
+def node_run_dotnet_tests(state: PipelineState) -> PipelineState:
+    """Node 4 (dotnet) — Extract run.sh, inject AI code, run dotnet test."""
+    logger.info("═══ Node: run_tests (DotNet) ═══")
+    if state.get("error"):
+        return state
+    try:
+        scaf_dir = state.get("scaffolding_dir", SCAFFOLDING_DIR)
+
+        weights = None
+        weights_path = "data/testcase_weights.json"
+        if os.path.exists(weights_path):
+            with open(weights_path, encoding="utf-8") as wf:
+                weights = json.load(wf)
+
+        runner  = DotNetTestRunner(scaffolding_dir=scaf_dir)
+        outcome = runner.run(
+            generated_files = state.get("generated_files", {}),
+            weights         = weights,
+        )
+
+        summary = outcome["summary"]
+        logger.info(
+            "DotNet tests complete — %d/%d passed (%.1f%%)",
+            summary["passed"], summary["total"], summary["pass_rate"],
+        )
+        if summary["total"] == 0:
+            logger.warning("⚠ 0 test results parsed from dotnet output")
+
+        return {
+            **state,
+            "test_results":  outcome["results"],
+            "test_summary":  summary,
+            "raw_stdout":    outcome.get("raw_output", ""),
+            "raw_stderr":    outcome.get("raw_stderr", ""),
+        }
+    except Exception as e:
+        logger.error("run_dotnet_tests failed: %s", e)
+        return {**state, "error": str(e)}
+
+
 def _save_json_summary(data: dict, excel_path: str) -> None:
     """Write qc_report.json alongside the Excel file."""
     json_path = excel_path.replace(".xlsx", ".json")
@@ -375,6 +450,29 @@ def _save_json_summary(data: dict, excel_path: str) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 # Build LangGraph
 # ─────────────────────────────────────────────────────────────────────────────
+
+def build_dotnet_graph() -> StateGraph:
+    graph = StateGraph(PipelineState)
+
+    graph.add_node("load_inputs",            node_load_inputs)
+    graph.add_node("ocr_extract",            node_ocr_extract)
+    graph.add_node("generate_solution",      node_generate_dotnet_solution)
+    graph.add_node("run_tests",              node_run_dotnet_tests)
+    graph.add_node("analyze_failures",       node_analyze_failures)
+    graph.add_node("score_description",      node_score_description)
+    graph.add_node("generate_excel_report",  node_generate_excel_report)
+
+    graph.set_entry_point("load_inputs")
+    graph.add_edge("load_inputs",           "ocr_extract")
+    graph.add_edge("ocr_extract",           "generate_solution")
+    graph.add_edge("generate_solution",     "run_tests")
+    graph.add_edge("run_tests",             "analyze_failures")
+    graph.add_edge("analyze_failures",      "score_description")
+    graph.add_edge("score_description",     "generate_excel_report")
+    graph.add_edge("generate_excel_report", END)
+
+    return graph.compile()
+
 
 def build_graph() -> StateGraph:
     graph = StateGraph(PipelineState)
@@ -409,6 +507,7 @@ def run_pipeline(
     scaffolding_dir:  str = SCAFFOLDING_DIR,
     report_path:      str = EXCEL_REPORT_FILE,
     cancel_event=None,
+    project_type:     str = "html",
 ) -> Dict[str, Any]:
     """
     Run the full QC automation pipeline.
@@ -427,9 +526,11 @@ def run_pipeline(
         logger.error("GROQ_API_KEY is not set. Add it to your .env file.")
         sys.exit(1)
 
-    graph = build_graph()
+    graph = build_dotnet_graph() if project_type == "dotnet" else build_graph()
+    logger.info("Using %s pipeline", project_type.upper())
 
     initial_state: PipelineState = {
+        "project_type":     project_type,
         "testcase_path":    testcase_path,
         "description_path": description_path,
         "scaffolding_dir":  scaffolding_dir,

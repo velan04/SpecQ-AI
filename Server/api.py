@@ -17,7 +17,7 @@ import subprocess
 import httpx
 import uvicorn
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -68,6 +68,7 @@ async def run(
     testcase:        UploadFile        = File(...),
     description:     UploadFile        = File(...),
     scaffolding_zip: UploadFile        = File(default=None),
+    project_type:    str               = Form(default='html'),
 ):
     if pipeline_status["running"]:
         return {"status": "already_running"}
@@ -186,18 +187,21 @@ async def run(
     pipeline_status["error"]   = None
     cancel_event.clear()
 
+    _project_type = project_type  # capture in closure
+
     def _run():
         _logger = logging.getLogger("qc_pipeline")
         if _ws_handler not in _logger.handlers:
             _logger.addHandler(_ws_handler)
         try:
-            _logger.info("Pipeline thread started — importing modules…")
+            _logger.info("Pipeline thread started — project_type=%s — importing modules…", _project_type)
             from main import run_pipeline
             run_pipeline(
                 testcase_path    = "data/testcase.js",
                 description_path = "data/description.txt",
                 scaffolding_dir  = scaffolding_dir,
                 cancel_event     = cancel_event,
+                project_type     = _project_type,
             )
         except Exception as e:
             import traceback
@@ -938,7 +942,12 @@ async def import_question(body: dict):
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=502)
 
-    return await _build_import_response(data, raw_token, question_data_override=question_data)
+    try:
+        return await _build_import_response(data, raw_token, question_data_override=question_data)
+    except Exception as e:
+        import traceback
+        logging.getLogger("qc_pipeline").error("import-question crashed: %s\n%s", e, traceback.format_exc())
+        return JSONResponse({"error": f"Import processing failed: {e}"}, status_code=500)
 
 
 # ── POST /api/import-from-json ───────────────────────────────────────────────
@@ -994,13 +1003,13 @@ async def _build_import_response(data: dict, auth_header: str, question_data_ove
     """Shared logic: extract fields, embed images, download ZIP, save description."""
     _logger = logging.getLogger("qc_pipeline")
 
-    learning    = data.get("learning", {})
-    answer      = data.get("answer",   {})
-    boilerplate = answer.get("boilerPlate", {})
-    zip_url     = boilerplate.get("url", "")
-    zip_filename = boilerplate.get("file", "boilerplate.zip")
-    configs     = answer.get("config", [{}])
-    testcases   = configs[0].get("testcases", []) if configs else []
+    learning    = data.get("learning") or {}
+    answer      = data.get("answer")   or {}
+    boilerplate = answer.get("boilerPlate") or {}
+    zip_url     = boilerplate.get("url", "") if isinstance(boilerplate, dict) else ""
+    zip_filename = boilerplate.get("file", "boilerplate.zip") if isinstance(boilerplate, dict) else "boilerplate.zip"
+    configs     = answer.get("config") or []
+    testcases   = configs[0].get("testcases", []) if configs and isinstance(configs[0], dict) else []
 
     # question_data lives in the questionfilter response, not in project_question.
     # Frontend passes it via question_data_override; fall back to learning.question_data.
@@ -1160,6 +1169,103 @@ def get_testcase():
     with open(path, encoding="utf-8") as f:
         content = f.read()
     return {"content": content}
+
+
+# ── GET /api/dotnet-solution-files ───────────────────────────────────────────
+@app.get("/api/dotnet-solution-files")
+def get_dotnet_solution_files():
+    """Return AI-generated .cs files as { filename: content }."""
+    dir_path = "data/dotnet_solution"
+    if not os.path.exists(dir_path):
+        return {}
+    result = {}
+    for fname in sorted(os.listdir(dir_path)):
+        if fname.endswith(".cs"):
+            with open(os.path.join(dir_path, fname), encoding="utf-8") as f:
+                result[fname] = f.read()
+    return result
+
+
+# ── GET /api/dotnet-testcase-files ────────────────────────────────────────────
+@app.get("/api/dotnet-testcase-files")
+def get_dotnet_testcase_files():
+    """Return NUnit TestProject .cs files as { filename: content }."""
+    dir_path = "data/dotnet_testcases"
+    if not os.path.exists(dir_path):
+        return {}
+    result = {}
+    for fname in sorted(os.listdir(dir_path)):
+        if fname.endswith(".cs"):
+            with open(os.path.join(dir_path, fname), encoding="utf-8") as f:
+                result[fname] = f.read()
+    return result
+
+
+# ── GET /api/preview-testcases ───────────────────────────────────────────────
+@app.get("/api/preview-testcases")
+def preview_testcases():
+    """
+    Extract NUnit TestProject .cs files from the imported ZIP (run.sh archive)
+    without running the full pipeline. Returns { filename: content }.
+    Also saves them to data/dotnet_testcases/ for the Code Space endpoint.
+    """
+    import tempfile as _tempfile
+    import zipfile  as _zipfile
+    import re       as _re
+
+    IMPORT_ZIP = "data/imported_boilerplate.zip"
+    tmp_dir    = None
+
+    try:
+        # ── Prefer the freshly imported ZIP (extracted to temp) ───────────────
+        if os.path.exists(IMPORT_ZIP):
+            tmp_dir = _tempfile.mkdtemp(prefix="qc_preview_")
+            with _zipfile.ZipFile(IMPORT_ZIP, "r") as zf:
+                zf.extractall(tmp_dir)
+            scaf_dir = tmp_dir
+        else:
+            # Fallback: pipeline has already run and extracted into scaffolding/
+            scaf_dir = "data/scaffolding"
+
+        from tools.junit_test_reader  import read_junit_tests
+        from tools.dotnet_test_runner import DotNetTestRunner
+
+        # ── Try JUnit first (junit.sh) ────────────────────────────────────────
+        java_files = read_junit_tests(scaf_dir)
+        if java_files:
+            save_dir = os.path.join("data", "junit_testcases")
+            os.makedirs(save_dir, exist_ok=True)
+            for f in os.listdir(save_dir):
+                if f.endswith(".java"):
+                    os.remove(os.path.join(save_dir, f))
+            for fname, code in java_files.items():
+                with open(os.path.join(save_dir, fname), "w", encoding="utf-8") as fh:
+                    fh.write(code)
+            return {**java_files, "__type__": "junit"}
+
+        # ── Fall back to NUnit (run.sh) ───────────────────────────────────────
+        content = DotNetTestRunner.read_nunit_tests(scaf_dir)
+        if not content:
+            return JSONResponse(status_code=404, content={"error": "No testcase files found. Make sure a ZIP has been imported."})
+
+        save_dir = os.path.join("data", "dotnet_testcases")
+        os.makedirs(save_dir, exist_ok=True)
+        for f in os.listdir(save_dir):
+            if f.endswith(".cs"):
+                os.remove(os.path.join(save_dir, f))
+        result = {}
+        pattern = _re.compile(r'// === (.+?) ===\n(.*?)(?=\n// === |\Z)', _re.DOTALL)
+        for m in pattern.finditer(content):
+            fname = m.group(1).strip()
+            code  = m.group(2)
+            result[fname] = code
+            with open(os.path.join(save_dir, fname), "w", encoding="utf-8") as fh:
+                fh.write(code)
+        return {**result, "__type__": "nunit"}
+
+    finally:
+        if tmp_dir:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 # ── GET /api/solution-files ───────────────────────────────────────────────────

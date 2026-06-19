@@ -1,9 +1,8 @@
 """
 Solution Generator Agent
 =========================
-Reads description + OCR text + testcase.js content.
-Extracts all CSS selectors from testcase.js as hints so the LLM knows
-exactly which element IDs and classes must exist.
+Reads description + OCR text only — testcase.js is NEVER shared with the AI.
+The AI generates index.html, style.css, script.js purely from the description.
 
 When the description contains base64-embedded images, extracts and compresses
 them (Pillow: resize to 1024px, re-encode as JPEG) then passes them directly
@@ -71,12 +70,12 @@ class SolutionGeneratorAgent:
         self,
         description_content: str,
         ocr_text: str,
-        testcase_content: str,
         public_dir: str,
         image_urls: Optional[List[str]] = None,
     ) -> Dict[str, str]:
         """
         Generate web solution files and write them to public_dir.
+        AI only sees description + OCR text + design images — never testcase.js.
 
         image_urls: pre-signed S3 URLs from node_ocr_extract (preferred).
                     When None or empty, falls back to compressed base64 extraction.
@@ -108,7 +107,7 @@ class SolutionGeneratorAgent:
         ocr_trimmed = (ocr_text or "None")[:5000]
 
         logger.info(
-            "Solution prompt: desc=%d chars, ocr=%d chars — testcase hidden from AI",
+            "Solution prompt: desc=%d chars, ocr=%d chars",
             len(clean_desc), len(ocr_trimmed),
         )
 
@@ -121,7 +120,7 @@ class SolutionGeneratorAgent:
             "Use these exact strings in your HTML. Do not invent your own text."
         ) if has_images else "DESIGN IMAGES: No design images were found in the description."
 
-        # ── Step 3: format prompt — testcase is completely hidden from AI ────
+        # ── Step 3: format prompt ────────────────────────────────────────────
         user_text = SOLUTION_USER.format(
             description=clean_desc,
             ocr_text=ocr_trimmed,
@@ -220,33 +219,6 @@ class SolutionGeneratorAgent:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-def _extract_selectors(testcase_content: str) -> list:
-    """
-    Statically extract all CSS selectors and IDs referenced in testcase.js.
-    Used as hints for the AI so it generates matching elements.
-    """
-    patterns = [
-        r'waitForSelector\([\'"]([^\'"]+)[\'"]\)',
-        r'\$eval\([\'"]([^\'"]+)[\'"]\s*,',
-        r'\.select\([\'"]([^\'"]+)[\'"]\s*,',
-        r'\.type\([\'"]([^\'"]+)[\'"]\s*,',
-        r'\.click\([\'"]([^\'"]+)[\'"]\)',
-        r'querySelector\([\'"]([^\'"]+)[\'"]\)',
-        r'\$\$eval\([\'"]([^\'"]+)[\'"]\s*,',
-    ]
-    found = []
-    for pat in patterns:
-        found.extend(re.findall(pat, testcase_content))
-
-    # Deduplicate, preserve insertion order
-    seen   = set()
-    unique = []
-    for s in found:
-        if s not in seen:
-            seen.add(s)
-            unique.append(s)
-    return unique
 
 
 def _build_groq_messages(system: str, user_text: str, images: List[str]) -> list:

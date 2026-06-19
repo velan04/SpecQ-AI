@@ -1,9 +1,9 @@
 # ── Stage: Python 3.11 + Node.js 20 + Chromium (for Puppeteer) ────────────────
 FROM python:3.11-slim
 
-# System deps + Chromium + Node.js 20
+# System deps + Chromium + Node.js 20 + .NET 6 SDK
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl gnupg ca-certificates \
+    curl gnupg ca-certificates wget \
     chromium \
     fonts-liberation \
     libasound2 \
@@ -22,6 +22,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     xdg-utils \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install .NET 6 SDK (Microsoft package feed)
+RUN wget -q https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb \
+    && dpkg -i /tmp/packages-microsoft-prod.deb \
+    && rm /tmp/packages-microsoft-prod.deb \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends dotnet-sdk-6.0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Tell Puppeteer to use system Chromium — skip bundled Chrome download
