@@ -24,13 +24,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# Install .NET 6 SDK (Microsoft package feed)
-RUN wget -q https://packages.microsoft.com/config/debian/11/packages-microsoft-prod.deb -O /tmp/packages-microsoft-prod.deb \
-    && dpkg -i /tmp/packages-microsoft-prod.deb \
-    && rm /tmp/packages-microsoft-prod.deb \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends dotnet-sdk-6.0 \
-    && rm -rf /var/lib/apt/lists/*
+# Install .NET 6 SDK via official install script (works on any Debian/Ubuntu version)
+RUN wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh \
+    && chmod +x /tmp/dotnet-install.sh \
+    && /tmp/dotnet-install.sh --channel 6.0 --install-dir /usr/share/dotnet \
+    && ln -sf /usr/share/dotnet/dotnet /usr/local/bin/dotnet \
+    && rm /tmp/dotnet-install.sh
+
+ENV DOTNET_ROOT=/usr/share/dotnet
+ENV PATH="${PATH}:/usr/share/dotnet"
 
 # Tell Puppeteer to use system Chromium — skip bundled Chrome download
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
