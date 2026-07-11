@@ -80,13 +80,11 @@ class DotNetTestRunner:
             # 5. Fix TestProject.csproj ProjectReference path to dotnetapp.csproj
             self._fix_csproj_reference(test_project, dotnetapp_dir)
 
-            # 6. Run dotnet test on TestProject/ directly.
-            #    The .sln lives inside dotnetapp/ and its relative paths break when
-            #    both projects are siblings — using the .csproj avoids that entirely.
-            stdout, stderr, returncode = self._run_dotnet_test(test_project)
+            # 6. Build and run NUnit tests (via NUnit Console Runner, not VSTest).
+            stdout, stderr, returncode, result_xml = self._run_dotnet_test(test_project)
 
-            # 8. Parse NUnit output
-            results = self._parse_output(stdout, stderr)
+            # 8. Parse results — prefer NUnit XML (exact pass/fail per test), fall back to stdout
+            results = self._parse_nunit_xml(result_xml) or self._parse_output(stdout, stderr)
             if not results:
                 logger.warning("No test results parsed from dotnet test output — dumping stdout")
                 for line in stdout.splitlines()[:40]:
@@ -271,29 +269,26 @@ class DotNetTestRunner:
         return "dotnet"  # will fail with clear error
 
     def _run_dotnet_test(self, work_dir: str):
-        """Run dotnet test and return (stdout, stderr, returncode).
+        """Build and run NUnit tests. Returns (stdout, stderr, returncode, xml_path).
 
-        work_dir should be the TestProject/ directory.  We look for a .csproj
-        there; if not found we fall back to the directory itself.
+        Uses NUnit Console Runner (dotnet-nunit) instead of VSTest to avoid
+        the protocol negotiation timeout that plagues slow containers.
         """
-        logger.info("Running dotnet test in %s", work_dir)
+        logger.info("Running dotnet tests in %s", work_dir)
         dotnet = self._find_dotnet_exe()
 
         csproj = self._find_file(work_dir, ".csproj")
         target = csproj or work_dir
-        logger.info("dotnet test target: %s", target)
+        logger.info("dotnet build target: %s", target)
 
         env = os.environ.copy()
-        # COMPlus_ prefix is the correct name for .NET 6 (DOTNET_ prefix only works in .NET 7+)
-        env["COMPlus_EnableDiagnostics"] = "0"      # disables diagnostics named pipe — fixes VSTest slow negotiation in containers
-        env["COMPlus_TieredCompilation"] = "0"      # disables tiered JIT — prevents stalls on slow CPUs
-        env["DOTNET_EnableDiagnostics"] = "0"       # also set .NET 7+ alias for forward-compat
+        env["COMPlus_EnableDiagnostics"] = "0"
+        env["COMPlus_TieredCompilation"] = "0"
         env["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
         env["DOTNET_NOLOGO"] = "1"
-        env["VSTEST_CONNECTION_TIMEOUT"] = "300"
 
+        # Step 1 — restore
         try:
-            # Restore + build separately so dotnet test only has to start the test host
             subprocess.run(
                 [dotnet, "restore", target],
                 capture_output=True, text=True, timeout=120, cwd=work_dir, env=env,
@@ -301,43 +296,91 @@ class DotNetTestRunner:
         except Exception:
             pass
 
+        # Step 2 — build
+        build_result = None
         try:
-            subprocess.run(
+            build_result = subprocess.run(
                 [dotnet, "build", target, "--no-restore", "-c", "Debug"],
                 capture_output=True, text=True, timeout=180, cwd=work_dir, env=env,
             )
-        except Exception:
-            pass
+            logger.info("dotnet build exit=%d", build_result.returncode)
+            if build_result.returncode != 0:
+                err = (build_result.stdout or "") + (build_result.stderr or "")
+                return "", err, 1, ""
+        except subprocess.TimeoutExpired:
+            return "", "dotnet build timed out after 180 seconds", 1, ""
+        except FileNotFoundError:
+            return "", f"dotnet not found (tried: {dotnet})", 1, ""
 
+        # Step 3 — find built DLL
+        dll = self._find_test_dll(work_dir)
+        if not dll:
+            return "", "TestProject.dll not found after build", 1, ""
+        logger.info("Test DLL: %s", dll)
+
+        # Step 4 — run with NUnit Console (no VSTest, no protocol negotiation)
+        result_xml = os.path.join(work_dir, "nunit_result.xml")
         try:
             proc = subprocess.run(
-                [dotnet, "test", target, "--no-build", "--no-restore", "-l", "console;verbosity=normal"],
-                capture_output=True,
-                text=True,
-                timeout=300,
-                cwd=work_dir,
-                env=env,
+                ["dotnet-nunit", dll, f"--result={result_xml}", "--labels=All"],
+                capture_output=True, text=True, timeout=120, cwd=work_dir, env=env,
             )
-            logger.info(
-                "dotnet test done — exit=%d stdout=%d stderr=%d",
-                proc.returncode, len(proc.stdout), len(proc.stderr),
-            )
+            logger.info("dotnet-nunit exit=%d stdout=%d", proc.returncode, len(proc.stdout))
             if proc.stderr:
-                for line in proc.stderr.splitlines()[:20]:
-                    logger.warning("DOTNET STDERR: %s", line)
-            return proc.stdout, proc.stderr, proc.returncode
+                for line in proc.stderr.splitlines()[:10]:
+                    logger.warning("NUNIT STDERR: %s", line)
+            return proc.stdout, proc.stderr, proc.returncode, result_xml
         except FileNotFoundError:
-            msg = (
-                f"dotnet command not found (tried: {dotnet}) — "
-                "Install .NET 6 SDK from https://dotnet.microsoft.com/download/dotnet/6.0 "
-                "then restart your terminal/server so the PATH is updated."
-            )
-            logger.error(msg)
-            return "", msg, 1
+            logger.warning("dotnet-nunit not found — falling back to dotnet test")
+            return self._run_dotnet_test_vstest(work_dir, target, env)
         except subprocess.TimeoutExpired:
-            msg = "dotnet test timed out after 300 seconds"
-            logger.error(msg)
-            return "", msg, 1
+            return "", "dotnet-nunit timed out after 120 seconds", 1, ""
+
+    def _run_dotnet_test_vstest(self, work_dir: str, target: str, env: dict):
+        """Fallback: run dotnet test (VSTest) if NUnit Console is not installed."""
+        try:
+            env["VSTEST_CONNECTION_TIMEOUT"] = "300"
+            proc = subprocess.run(
+                ["dotnet", "test", target, "--no-build", "--no-restore", "-l", "console;verbosity=normal"],
+                capture_output=True, text=True, timeout=300, cwd=work_dir, env=env,
+            )
+            return proc.stdout, proc.stderr, proc.returncode, ""
+        except subprocess.TimeoutExpired:
+            return "", "dotnet test timed out after 300 seconds", 1, ""
+
+    def _find_test_dll(self, work_dir: str) -> str:
+        """Find the built TestProject DLL in bin/Debug/."""
+        for root, _dirs, files in os.walk(work_dir):
+            for fname in files:
+                if fname == "TestProject.dll" and "bin" in root:
+                    return os.path.join(root, fname)
+        return ""
+
+    def _parse_nunit_xml(self, xml_path: str) -> List[Dict]:
+        """Parse NUnit XML result file produced by dotnet-nunit --result=file.xml."""
+        import xml.etree.ElementTree as ET
+        if not xml_path or not os.path.exists(xml_path):
+            return []
+        try:
+            root = ET.parse(xml_path).getroot()
+            results = []
+            for tc in root.iter("test-case"):
+                fullname = tc.get("fullname", "") or tc.get("name", "")
+                tc_id = fullname.split(".")[-1] if "." in fullname else fullname
+                result = tc.get("result", "")
+                status = "PASS" if result == "Passed" else "FAIL"
+                error_msg = None
+                failure = tc.find("failure")
+                if failure is not None:
+                    msg_el = failure.find("message")
+                    error_msg = msg_el.text.strip() if msg_el is not None and msg_el.text else None
+                results.append({"id": tc_id, "name": _id_to_name(tc_id), "status": status, "error_message": error_msg})
+                logger.info("[%s] %s", status, tc_id)
+            logger.info("Parsed %d test results from NUnit XML", len(results))
+            return results
+        except Exception as e:
+            logger.warning("Failed to parse NUnit XML %s: %s", xml_path, e)
+            return []
 
     def _parse_output(self, stdout: str, stderr: str) -> List[Dict]:
         """

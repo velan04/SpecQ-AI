@@ -32,8 +32,11 @@ RUN wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh \
     && rm /tmp/dotnet-install.sh
 
 ENV DOTNET_ROOT=/usr/share/dotnet
-ENV PATH="${PATH}:/usr/share/dotnet"
+ENV PATH="${PATH}:/usr/share/dotnet:/root/.dotnet/tools"
 ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
+
+# Install NUnit Console Runner (bypasses VSTest — no protocol negotiation, much faster)
+RUN /usr/share/dotnet/dotnet tool install --global NUnit.ConsoleRunner.NetCore --version 3.16.3
 
 # Tell Puppeteer to use system Chromium — skip bundled Chrome download
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
