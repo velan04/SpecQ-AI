@@ -369,17 +369,43 @@ def node_generate_excel_report(state: PipelineState) -> PipelineState:
     return state
 
 
+def _read_template_source_files(scaffolding_dir: str) -> dict:
+    """Read boilerplate .cs source files — excludes nunit/junit/test directories."""
+    TEST_DIRS = {"nunit", "junit", "test", "testproject", "__tests__"}
+    result = {}
+    if not os.path.isdir(scaffolding_dir):
+        return result
+    for root, dirs, files in os.walk(scaffolding_dir):
+        dirs[:] = [d for d in dirs if d.lower() not in TEST_DIRS]
+        for fname in files:
+            if not fname.endswith(".cs"):
+                continue
+            try:
+                with open(os.path.join(root, fname), "r", encoding="utf-8", errors="ignore") as f:
+                    result[fname] = f.read()
+            except Exception:
+                pass
+    return result
+
+
 def node_generate_dotnet_solution(state: PipelineState) -> PipelineState:
     """Node 3 (dotnet) — AI generates Program.cs + domain classes from description."""
     logger.info("═══ Node: generate_solution (DotNet Agent) ═══")
     if state.get("error"):
         return state
     try:
+        template_files = _read_template_source_files("data/scaffolding")
+        if template_files:
+            logger.info("Template source files passed to AI: %s", list(template_files.keys()))
+        else:
+            logger.warning("No template source files found — AI will infer structure from description")
+
         agent = DotNetSolutionGeneratorAgent()
         files = agent.generate(
             description_content = state["description_content"],
             ocr_text            = state.get("ocr_text", ""),
             image_urls          = state.get("image_urls", []),
+            template_files      = template_files,
         )
         logger.info("DotNet solution generated: %s", list(files.keys()))
         # Persist generated .cs files so Code Space can display them

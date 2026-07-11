@@ -21,17 +21,24 @@ from langchain_core.messages import SystemMessage, HumanMessage
 logger = logging.getLogger(__name__)
 
 DOTNET_SYSTEM = """You are a senior C# / .NET developer implementing a complete solution
-based on a project description and NUnit test requirements.
+based on a project description and starter template files.
 
 You will be given:
-1. PROJECT DESCRIPTION — full specification of the .NET console application
-2. (Optional) OCR TEXT — text extracted from description images
+1. STARTER TEMPLATE — the existing boilerplate .cs files from the project scaffolding
+2. PROJECT DESCRIPTION — full specification of the .NET console application
+3. (Optional) OCR TEXT — text extracted from description images
 
 YOUR MISSION: Generate complete, correct C# implementation files.
 
 ════════════════════════════════════════
 CRITICAL IMPLEMENTATION RULES:
 ════════════════════════════════════════
+
+RULE 0 — FOLLOW THE STARTER TEMPLATE EXACTLY:
+Study the starter template files carefully.
+Copy ALL `using` directives from the template into your output — add more if needed.
+Keep the same namespace, class names, and method signatures shown in the template.
+Your implementation replaces the stub bodies but preserves the structure.
 
 RULE 1 — ONE CLASS PER FILE, NEVER REPEAT:
 Each class/exception/struct must appear in EXACTLY ONE file.
@@ -78,7 +85,10 @@ Filenames must end with .cs.
 CRITICAL: each class name appears in exactly one file — no duplicates.
 """
 
-DOTNET_USER = """PROJECT DESCRIPTION:
+DOTNET_USER = """STARTER TEMPLATE FILES (follow this structure exactly — same using directives, namespace, class names):
+{template_section}
+
+PROJECT DESCRIPTION:
 {description}
 
 {ocr_section}
@@ -86,6 +96,7 @@ DOTNET_USER = """PROJECT DESCRIPTION:
 Generate the complete C# implementation.
 Return ONLY a JSON object: {{ "filename.cs": "file content", ... }}
 Include ALL classes needed to satisfy the description.
+IMPORTANT: Include every `using` directive from the starter template, plus any additional ones your implementation needs.
 """
 
 
@@ -103,18 +114,29 @@ class DotNetSolutionGeneratorAgent:
         description_content: str,
         ocr_text:            str = "",
         image_urls:          List[str] = None,
+        template_files:      Dict[str, str] = None,
     ) -> Dict[str, str]:
         """
         Returns a dict of {filename: content} for all .cs files to inject.
         Falls back to a stub Program.cs if generation fails.
+        template_files: {filename: content} of boilerplate source files (NOT testcases).
         """
         clean_desc = strip_base64_images(description_content)
 
         ocr_section = f"OCR TEXT FROM IMAGES:\n{ocr_text}" if ocr_text.strip() else ""
 
+        if template_files:
+            parts = []
+            for fname, content in template_files.items():
+                parts.append(f"// ── {fname} ──\n{content}")
+            template_section = "\n\n".join(parts)
+        else:
+            template_section = "(No starter template provided — infer structure from description.)"
+
         user_msg = DOTNET_USER.format(
-            description = clean_desc,
-            ocr_section = ocr_section,
+            description      = clean_desc,
+            ocr_section      = ocr_section,
+            template_section = template_section,
         )
 
         for attempt in range(MAX_RETRIES):
