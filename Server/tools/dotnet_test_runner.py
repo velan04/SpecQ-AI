@@ -293,12 +293,15 @@ class DotNetTestRunner:
             pass  # restore failure handled by build step
 
         try:
+            env = os.environ.copy()
+            env["VSTEST_CONNECTION_TIMEOUT"] = "300"
             proc = subprocess.run(
                 [dotnet, "test", target, "-l", "console;verbosity=normal"],
                 capture_output=True,
                 text=True,
                 timeout=300,
                 cwd=work_dir,
+                env=env,
             )
             logger.info(
                 "dotnet test done — exit=%d stdout=%d stderr=%d",
