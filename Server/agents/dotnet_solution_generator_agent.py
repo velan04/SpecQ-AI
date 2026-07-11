@@ -40,6 +40,16 @@ Copy ALL `using` directives from the template into your output — add more if n
 Keep the same namespace, class names, and method signatures shown in the template.
 Your implementation replaces the stub bodies but preserves the structure.
 
+RULE 0b — ALWAYS INCLUDE THESE STANDARD NAMESPACES IN EVERY .cs FILE THAT NEEDS THEM:
+using System;
+using System.Text;
+using System.Collections.Generic;
+using System.Linq;
+using System.IO;
+Never omit `using System.Text;` when using StringBuilder.
+Never omit `using System.Collections.Generic;` when using List<T>, Dictionary<K,V>, etc.
+Never omit `using System.Linq;` when using LINQ methods.
+
 RULE 1 — ONE CLASS PER FILE, NEVER REPEAT:
 Each class/exception/struct must appear in EXACTLY ONE file.
 NEVER define the same class in two different files — this causes CS0101 compile errors.
