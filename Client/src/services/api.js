@@ -277,7 +277,6 @@ const DEPT_IDS = [
     "21f2438a-e000-40cd-a6eb-3ee38c29a563",
     "1ea36c05-0eb3-425e-9cb2-ca9a662d9d3d",
     "5354feb0-d71d-4ebf-b2d2-da9ef2263f6f"
-],
 ];
 
 /**
