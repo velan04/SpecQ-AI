@@ -394,11 +394,11 @@ def node_generate_dotnet_solution(state: PipelineState) -> PipelineState:
     if state.get("error"):
         return state
     try:
-        template_files = _read_template_source_files("data/scaffolding")
+        template_files = DotNetTestRunner.read_template_source_files("data/scaffolding")
         if template_files:
             logger.info("Template source files passed to AI: %s", list(template_files.keys()))
         else:
-            logger.warning("No template source files found — AI will infer structure from description")
+            logger.warning("No template source files found in run.sh tar — AI will infer structure from description")
 
         agent = DotNetSolutionGeneratorAgent()
         files = agent.generate(

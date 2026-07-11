@@ -143,6 +143,43 @@ class DotNetTestRunner:
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    @classmethod
+    def read_template_source_files(cls, scaffolding_dir: str) -> dict:
+        """
+        Extract run.sh archive and return {filename: content} for all .cs files
+        in dotnetapp/ (the student template), excluding test directories.
+        Called BEFORE AI generation so the agent follows the correct structure.
+        Returns empty dict on any failure (non-fatal).
+        """
+        TEST_DIRS = {"nunit", "junit", "test", "testproject", "__tests__"}
+        runner = cls(scaffolding_dir=scaffolding_dir)
+        run_sh = runner._find_run_sh()
+        if not run_sh:
+            return {}
+        tmp = tempfile.mkdtemp(prefix="qc_dotnet_tmpl_")
+        try:
+            if not runner._extract_tar_from_run_sh(run_sh, tmp):
+                return {}
+            dotnetapp_dir = runner._find_dir(tmp, "dotnetapp")
+            if not dotnetapp_dir:
+                return {}
+            result = {}
+            for root, dirs, files in os.walk(dotnetapp_dir):
+                dirs[:] = [d for d in dirs if d.lower() not in TEST_DIRS]
+                for fname in sorted(files):
+                    if not fname.endswith(".cs"):
+                        continue
+                    fpath = os.path.join(root, fname)
+                    with open(fpath, encoding="utf-8", errors="ignore") as f:
+                        result[fname] = f.read()
+            logger.info("read_template_source_files: found %s", list(result.keys()))
+            return result
+        except Exception as e:
+            logger.warning("read_template_source_files failed (non-fatal): %s", e)
+            return {}
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def _find_run_sh(self) -> Optional[str]:
         for root, _dirs, files in os.walk(self.scaffolding_dir):
             for f in files:
