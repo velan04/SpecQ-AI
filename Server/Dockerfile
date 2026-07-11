@@ -33,6 +33,7 @@ RUN wget -q https://dot.net/v1/dotnet-install.sh -O /tmp/dotnet-install.sh \
 
 ENV DOTNET_ROOT=/usr/share/dotnet
 ENV PATH="${PATH}:/usr/share/dotnet"
+ENV DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1
 
 # Tell Puppeteer to use system Chromium — skip bundled Chrome download
 ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true
