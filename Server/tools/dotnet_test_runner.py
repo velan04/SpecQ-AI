@@ -283,23 +283,35 @@ class DotNetTestRunner:
         target = csproj or work_dir
         logger.info("dotnet test target: %s", target)
 
-        try:
-            # Restore packages first
-            subprocess.run(
-                [dotnet, "restore", target],
-                capture_output=True, text=True, timeout=120, cwd=work_dir,
-            )
-        except Exception:
-            pass  # restore failure handled by build step
+        env = os.environ.copy()
+        # COMPlus_ prefix is the correct name for .NET 6 (DOTNET_ prefix only works in .NET 7+)
+        env["COMPlus_EnableDiagnostics"] = "0"      # disables diagnostics named pipe — fixes VSTest slow negotiation in containers
+        env["COMPlus_TieredCompilation"] = "0"      # disables tiered JIT — prevents stalls on slow CPUs
+        env["DOTNET_EnableDiagnostics"] = "0"       # also set .NET 7+ alias for forward-compat
+        env["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
+        env["DOTNET_NOLOGO"] = "1"
+        env["VSTEST_CONNECTION_TIMEOUT"] = "300"
 
         try:
-            env = os.environ.copy()
-            env["VSTEST_CONNECTION_TIMEOUT"] = "300"
-            env["DOTNET_EnableDiagnostics"] = "0"   # disables diagnostics pipe — fixes VSTest slow negotiation in containers
-            env["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
-            env["DOTNET_NOLOGO"] = "1"
+            # Restore + build separately so dotnet test only has to start the test host
+            subprocess.run(
+                [dotnet, "restore", target],
+                capture_output=True, text=True, timeout=120, cwd=work_dir, env=env,
+            )
+        except Exception:
+            pass
+
+        try:
+            subprocess.run(
+                [dotnet, "build", target, "--no-restore", "-c", "Debug"],
+                capture_output=True, text=True, timeout=180, cwd=work_dir, env=env,
+            )
+        except Exception:
+            pass
+
+        try:
             proc = subprocess.run(
-                [dotnet, "test", target, "--no-restore", "-l", "console;verbosity=normal"],
+                [dotnet, "test", target, "--no-build", "--no-restore", "-l", "console;verbosity=normal"],
                 capture_output=True,
                 text=True,
                 timeout=300,
