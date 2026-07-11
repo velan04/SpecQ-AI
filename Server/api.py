@@ -853,7 +853,7 @@ async def questions_in_bank(body: dict):
         "qb_id": qb_id,
         "type": "Single",   # 🔥 important
         "page": 1,
-        "limit": 50
+        "limit": 100
     }
 
     headers = {
