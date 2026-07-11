@@ -270,12 +270,18 @@ function TestcaseViewerPage() {
     if (!selectedQId) return;
     setImporting(true); setImportErr(''); setTestcaseFiles(null);
     try {
-      // Import question to get the ZIP on disk
       const res = await importQuestion(selectedQId, token.trim(), selectedQ?.question_data || '');
       if (res.error) { setImportErr(res.error); setImporting(false); return; }
-      // Extract testcases from the ZIP
-      const raw = await previewTestcases();
+
+      // Retry up to 3 times with increasing delay — ZIP write may lag on server
+      let raw = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 1500 * attempt));
+        raw = await previewTestcases();
+        if (!raw.error) break;
+      }
       if (raw.error) { setImportErr(raw.error); setImporting(false); return; }
+
       const { __type__, ...files } = raw;
       const keys = Object.keys(files);
       if (!keys.length) { setImportErr('No testcase files found in this ZIP.'); setImporting(false); return; }
