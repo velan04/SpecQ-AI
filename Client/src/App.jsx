@@ -8,7 +8,7 @@ import ResultsDisplay from './components/ResultsDisplay';
 import CodeSpace, { DotNetCodeSpace } from './components/CodeSpace';
 import LoaderOverlay from './components/LoaderOverlay';
 import TestcaseExcelGenerator from './components/TestcaseExcelGenerator'; // adjust path if needed
-import { startPipeline, getStatus, getReport, downloadExcelReport, createLogSocket, cancelPipeline, getDescription, importQuestion, getImportedZip, searchQuestionBanks, questionsInBank, previewTestcases } from './services/api';
+import { startPipeline, getStatus, getReport, downloadExcelReport, createLogSocket, cancelPipeline, getDescription, importQuestion, getImportedZip, searchQuestionBanks, questionsInBank, searchTests, questionsInTest, previewTestcases } from './services/api';
 
 /* ── Design tokens ─────────────────────────────────────────────────────────── */
 const T = {
@@ -192,11 +192,12 @@ const NavDropdown = ({ activePage, setActivePage }) => {
 function TestcaseViewerPage() {
   const [token,            setToken]            = useState(() => localStorage.getItem('examly_token') || '');
   const [tokenOpen,        setTokenOpen]        = useState(false);
+  const [searchMode,       setSearchMode]       = useState('qb');  // 'qb' | 'test'
   const [searchTerm,       setSearchTerm]       = useState('');
   const [searching,        setSearching]        = useState(false);
-  const [searchResults,    setSearchResults]    = useState([]);
+  const [searchResults,    setSearchResults]    = useState([]);  // banks or tests
   const [searchError,      setSearchError]      = useState('');
-  const [selectedBank,     setSelectedBank]     = useState(null);
+  const [selectedItem,     setSelectedItem]     = useState(null); // selected bank or test
   const [questions,        setQuestions]        = useState([]);
   const [loadingQ,         setLoadingQ]         = useState(false);
   const [questionsError,   setQuestionsError]   = useState('');
@@ -204,8 +205,8 @@ function TestcaseViewerPage() {
   const [selectedQId,      setSelectedQId]      = useState('');
   const [importing,        setImporting]        = useState(false);
   const [importErr,        setImportErr]        = useState('');
-  const [testcaseFiles,    setTestcaseFiles]    = useState(null); // { filename: content }
-  const [fileType,         setFileType]         = useState('nunit'); // 'nunit' | 'junit'
+  const [testcaseFiles,    setTestcaseFiles]    = useState(null);
+  const [fileType,         setFileType]         = useState('nunit');
   const [activeFile,       setActiveFile]       = useState('');
   const [copied,           setCopied]           = useState('');
   const tokenRef = useRef(null);
@@ -217,24 +218,48 @@ function TestcaseViewerPage() {
     return () => document.removeEventListener('mousedown', h);
   }, [tokenOpen]);
 
+  const resetSearch = () => {
+    setSearchResults([]); setSelectedItem(null);
+    setQuestions([]); setSelectedQ(null); setSelectedQId('');
+    setSearchError(''); setTestcaseFiles(null); setImportErr('');
+  };
+
+  const handleModeSwitch = (mode) => {
+    setSearchMode(mode);
+    setSearchTerm('');
+    resetSearch();
+  };
+
   const handleSearch = async () => {
     if (!token.trim()) { setSearchError('Set your JWT token first.'); setTokenOpen(true); return; }
     if (!searchTerm.trim()) { setSearchError('Enter a search term.'); return; }
-    setSearching(true); setSearchResults([]); setSelectedBank(null);
-    setQuestions([]); setSelectedQ(null); setSearchError(''); setTestcaseFiles(null);
+    setSearching(true);
+    resetSearch();
     try {
-      const res = await searchQuestionBanks(searchTerm.trim(), token.trim());
-      if (res.error) setSearchError(res.error);
-      else setSearchResults(res.questionbanks || []);
+      if (searchMode === 'qb') {
+        const res = await searchQuestionBanks(searchTerm.trim(), token.trim());
+        if (res.error) setSearchError(res.error);
+        else setSearchResults(res.questionbanks || []);
+      } else {
+        const res = await searchTests(searchTerm.trim(), token.trim());
+        if (res.error) setSearchError(res.error);
+        else setSearchResults(res.tests || []);
+      }
     } catch (e) { setSearchError(e.message); }
     setSearching(false);
   };
 
-  const handleSelectBank = async (bank) => {
-    setSelectedBank(bank); setQuestions([]); setSelectedQ(null); setQuestionsError('');
+  const handleSelectItem = async (item) => {
+    setSelectedItem(item); setQuestions([]); setSelectedQ(null);
+    setSelectedQId(''); setQuestionsError('');
     setLoadingQ(true);
     try {
-      const res = await questionsInBank(bank.qb_id, token.trim());
+      let res;
+      if (searchMode === 'qb') {
+        res = await questionsInBank(item.qb_id, token.trim());
+      } else {
+        res = await questionsInTest(item.testId, token.trim());
+      }
       if (res.error) setQuestionsError(res.error);
       else setQuestions(res.questions || []);
     } catch (e) { setQuestionsError(e.message); }
@@ -314,17 +339,34 @@ function TestcaseViewerPage() {
           Testcase Viewer
         </h2>
         <p style={{ fontSize: 13, color: T.textMuted, margin: 0 }}>
-          Search a question bank, select a question, and view its NUnit testcase files.
+          Search by QB name or Test name, select a question, and view its testcase files.
         </p>
       </div>
 
       {/* ── Search panel ── */}
       <div style={{ ...cardStyle, marginBottom: 20 }}>
+
+        {/* Mode toggle */}
+        <div style={{ display:'flex', gap:4, background:T.bg, border:`1px solid ${T.border}`, borderRadius:8, padding:3, alignSelf:'flex-start', marginBottom:14, width:'fit-content' }}>
+          {[
+            { key:'qb',   label:'QB Name'   },
+            { key:'test', label:'Test Name'  },
+          ].map(m => (
+            <button key={m.key} onClick={() => handleModeSwitch(m.key)} style={{
+              padding:'6px 18px', borderRadius:6, border:'none', cursor:'pointer', fontSize:12, fontWeight:700,
+              fontFamily:"'DM Sans',sans-serif", transition:'all 0.15s',
+              background: searchMode===m.key ? `linear-gradient(135deg,${T.indigo},${T.indigoMid})` : 'transparent',
+              color: searchMode===m.key ? '#fff' : T.textSecondary,
+              boxShadow: searchMode===m.key ? '0 2px 6px rgba(90,79,207,0.2)' : 'none',
+            }}>{m.label}</button>
+          ))}
+        </div>
+
         {/* Search row */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
           <input
             type="text"
-            placeholder="Search question bank…"
+            placeholder={searchMode === 'qb' ? 'Search question bank…' : 'Search test name…'}
             value={searchTerm}
             onChange={e => setSearchTerm(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && handleSearch()}
@@ -350,17 +392,26 @@ function TestcaseViewerPage() {
 
         {searchError && <p style={{ margin:'0 0 10px', fontSize:12, color:T.error }}>{searchError}</p>}
 
-        {/* Bank list */}
+        {/* Results list (banks or tests) */}
         {searchResults.length > 0 && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize:11, fontWeight:600, color:T.textMuted, marginBottom:6 }}>{searchResults.length} bank(s) found — click to load questions</div>
+            <div style={{ fontSize:11, fontWeight:600, color:T.textMuted, marginBottom:6 }}>
+              {searchResults.length} {searchMode === 'qb' ? 'bank(s)' : 'test(s)'} found — click to load questions
+            </div>
             <div style={{ display:'flex', flexDirection:'column', gap:4, maxHeight:160, overflowY:'auto' }}>
-              {searchResults.map(bank => {
-                const sel = selectedBank?.qb_id === bank.qb_id;
+              {searchResults.map(item => {
+                const id  = searchMode === 'qb' ? item.qb_id  : item.testId;
+                const lbl = searchMode === 'qb' ? item.qb_name : item.testName;
+                const sub = searchMode === 'qb'
+                  ? `${item.questionCount ?? '?'} questions · ${id}`
+                  : `${item.sections?.reduce((s, sec) => s + (sec.questionCount ?? 0), 0) || '?'} question(s) · ${id}`;
+                const sel = searchMode === 'qb'
+                  ? selectedItem?.qb_id === id
+                  : selectedItem?.testId === id;
                 return (
-                  <div key={bank.qb_id} onClick={() => handleSelectBank(bank)} style={{ padding:'9px 12px', borderRadius:T.radiusSm, cursor:'pointer', background:sel?T.indigoLight:T.bg, border:`1px solid ${sel?T.borderHover:T.border}`, transition:'all 0.12s' }}>
-                    <div style={{ fontSize:13, fontWeight:600, color:sel?T.indigo:T.textPrimary, fontFamily:"'DM Sans',sans-serif" }}>{bank.qb_name}</div>
-                    <div style={{ fontSize:11, color:T.textMuted, fontFamily:"'DM Mono',monospace" }}>{bank.questionCount??'?'} questions · {bank.qb_id}</div>
+                  <div key={id} onClick={() => handleSelectItem(item)} style={{ padding:'9px 12px', borderRadius:T.radiusSm, cursor:'pointer', background:sel?T.indigoLight:T.bg, border:`1px solid ${sel?T.borderHover:T.border}`, transition:'all 0.12s' }}>
+                    <div style={{ fontSize:13, fontWeight:600, color:sel?T.indigo:T.textPrimary, fontFamily:"'DM Sans',sans-serif" }}>{lbl}</div>
+                    <div style={{ fontSize:11, color:T.textMuted, fontFamily:"'DM Mono',monospace" }}>{sub}</div>
                   </div>
                 );
               })}
@@ -369,9 +420,13 @@ function TestcaseViewerPage() {
         )}
 
         {/* Question list */}
-        {selectedBank && (
+        {selectedItem && (
           <div style={{ marginBottom: 12 }}>
-            <div style={{ fontSize:11, fontWeight:700, color:T.textMuted, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.06em' }}>Questions in <span style={{ color:T.indigo, textTransform:'none' }}>{selectedBank.qb_name}</span></div>
+            <div style={{ fontSize:11, fontWeight:700, color:T.textMuted, marginBottom:6, textTransform:'uppercase', letterSpacing:'0.06em' }}>
+              Questions in <span style={{ color:T.indigo, textTransform:'none' }}>
+                {searchMode === 'qb' ? selectedItem.qb_name : selectedItem.testName}
+              </span>
+            </div>
             {loadingQ && <div style={{ fontSize:12, color:T.textMuted, padding:8 }}>Loading…</div>}
             {questionsError && <p style={{ margin:'4px 0', fontSize:12, color:T.error }}>{questionsError}</p>}
             {!loadingQ && questions.length > 0 && (

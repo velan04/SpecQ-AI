@@ -75,28 +75,8 @@ export const getDescription = () =>
 export const getTestcase = () =>
   fetch(`${BASE}/api/testcase`).then(r => r.json());
 
-/**
- * Search examly question banks by name.
- * Returns { questionbanks: [{qb_id, qb_name, questionCount, ...}], count }
- */
-export const searchQuestionBanks = (searchTerm, token) => {
-  const raw_token = token.toLowerCase().startsWith("bearer ") ? token.slice(7) : token;
-  
-  return fetch("https://api.examly.io/api/v2/questionbanks", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "authorization": raw_token,
-      "origin": "https://admin.orchard.iamneo.in",
-      "referer": "https://admin.orchard.iamneo.in/",
-    },
-    body: JSON.stringify({
-      branch_id: "all",
-      page: 1,
-      limit: 25,
-      visibility: "All",
-      search: searchTerm,
-      department_id: [
+// Shared department IDs used across examly API calls
+const DEPT_IDS = [
     "617346bd-b9c8-468d-9099-12170fb3b570",
     "8c9bb195-1e81-4506-bc39-c48e6450c2a0",
     "58efa904-a695-4c14-8335-124c9ec5e95a",
@@ -298,6 +278,30 @@ export const searchQuestionBanks = (searchTerm, token) => {
     "1ea36c05-0eb3-425e-9cb2-ca9a662d9d3d",
     "5354feb0-d71d-4ebf-b2d2-da9ef2263f6f"
 ],
+];
+
+/**
+ * Search examly question banks by name.
+ * Returns { questionbanks: [{qb_id, qb_name, questionCount, ...}], count }
+ */
+export const searchQuestionBanks = (searchTerm, token) => {
+  const raw_token = token.toLowerCase().startsWith("bearer ") ? token.slice(7) : token;
+
+  return fetch("https://api.examly.io/api/v2/questionbanks", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "authorization": raw_token,
+      "origin": "https://admin.orchard.iamneo.in",
+      "referer": "https://admin.orchard.iamneo.in/",
+    },
+    body: JSON.stringify({
+      branch_id: "all",
+      page: 1,
+      limit: 25,
+      visibility: "All",
+      search: searchTerm,
+      department_id: DEPT_IDS,
       mainDepartmentUser: true,
     }),
   })
@@ -354,6 +358,81 @@ export const questionsInBank = (qbId, token) => {
       questions,
       count: data?.number_of_questions ?? questions.length,
     };
+  });
+};
+
+/**
+ * Search examly tests by name.
+ * Returns { tests: [{testId, testName, sections, questions}], count }
+ */
+export const searchTests = (searchTerm, token) => {
+  const raw_token = token.toLowerCase().startsWith("bearer ") ? token.slice(7) : token;
+
+  return fetch("https://api.examly.io/api/v2/tests/filter", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "authorization": raw_token,
+      "origin": "https://admin.orchard.iamneo.in",
+      "referer": "https://admin.orchard.iamneo.in/",
+    },
+    body: JSON.stringify({
+      page: 1,
+      limit: 25,
+      search: searchTerm,
+      branch_id: "All",
+      department_id: DEPT_IDS,
+      mainDepartmentUser: true,
+    }),
+  })
+  .then(r => r.json())
+  .then(data => ({
+    tests: (data?.data ?? []).map(t => ({
+      testId:   t.testId,
+      testName: t.testName,
+      sections: t.sections ?? [],
+      questions: t.questions ?? [],
+    })),
+    count: data?.count ?? 0,
+  }));
+};
+
+/**
+ * Fetch all questions inside a test.
+ * Returns { questions: [{question_id, question_name, question_data}], count }
+ */
+export const questionsInTest = (testId, token) => {
+  const raw_token = token.toLowerCase().startsWith("bearer ") ? token.slice(7) : token;
+
+  return fetch(`https://api.examly.io/api/questions/test/${testId}`, {
+    headers: {
+      "authorization": raw_token,
+      "origin": "https://admin.orchard.iamneo.in",
+      "referer": "https://admin.orchard.iamneo.in/",
+    },
+  })
+  .then(r => r.json())
+  .then(data => {
+    const allQ = (Array.isArray(data) ? data : [])
+      .flatMap(section => section.non_group_questions ?? []);
+
+    const questions = allQ.map(q => {
+      const q_id = q.q_id ?? "";
+      const html = q.question_data ?? "";
+
+      const titleMatch = html.match(/Project Title[:\s ]*([^<\n\r]{3,120})/i);
+      let name;
+      if (titleMatch) {
+        name = titleMatch[1].trim().replace(/&nbsp;/g, "").trim();
+      } else {
+        const plain = html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        name = plain.slice(0, 80) || `Question ${q_id.slice(0, 8)}`;
+      }
+
+      return { question_id: q_id, question_name: name, question_data: html };
+    });
+
+    return { questions, count: questions.length };
   });
 };
 
