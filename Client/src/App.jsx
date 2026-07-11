@@ -501,11 +501,11 @@ function TestcaseViewerPage() {
 
           {/* Toolbar */}
           <div style={{ display:'flex', alignItems:'center', padding:'5px 12px', background:'#181825', borderBottom:'1px solid #1e1e2e', gap:8 }}>
-            <span style={{ fontSize:10, color:'#45475a', flex:1 }}>{activeFile} · {lines.length} lines</span>
-            <button onClick={() => handleCopy(activeFile)} style={{ fontSize:10, background:copied===activeFile?'#1e3a2f':'#1e1e2e', color:copied===activeFile?'#34d399':'#585b70', border:'1px solid #313244', borderRadius:4, padding:'3px 10px', cursor:'pointer', transition:'all 0.2s' }}>
+            <span style={{ fontSize:10, color:'#6c7086', flex:1 }}>{activeFile} · {lines.length} lines</span>
+            <button onClick={() => handleCopy(activeFile)} style={{ fontSize:11, background:copied===activeFile?'#1e3a2f':'#313244', color:copied===activeFile?'#34d399':'#cdd6f4', border:`1px solid ${copied===activeFile?'#2d5a3d':'#45475a'}`, borderRadius:4, padding:'4px 12px', cursor:'pointer', transition:'all 0.2s', fontWeight:600 }}>
               {copied === activeFile ? '✓ copied' : 'copy'}
             </button>
-            <button onClick={() => handleDownload(activeFile)} style={{ fontSize:10, background:'#1e1e2e', color:'#585b70', border:'1px solid #313244', borderRadius:4, padding:'3px 10px', cursor:'pointer' }}>
+            <button onClick={() => handleDownload(activeFile)} style={{ fontSize:11, background:'#313244', color:'#cdd6f4', border:'1px solid #45475a', borderRadius:4, padding:'4px 12px', cursor:'pointer', fontWeight:600 }}>
               ⬇ download
             </button>
           </div>
