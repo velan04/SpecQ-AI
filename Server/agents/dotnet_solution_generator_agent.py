@@ -50,6 +50,14 @@ Never omit `using System.Text;` when using StringBuilder.
 Never omit `using System.Collections.Generic;` when using List<T>, Dictionary<K,V>, etc.
 Never omit `using System.Linq;` when using LINQ methods.
 
+RULE 0c — NEVER PRINT INPUT PROMPTS:
+NUnit tests use Console.SetOut to capture ALL console output and compare it to an exact expected string.
+Any extra text written to Console (like "Enter a string:", "Input:", "Enter value:") will cause every test to FAIL.
+In Main(), read input silently — do NOT call Console.Write() or Console.WriteLine() before Console.ReadLine().
+WRONG:  Console.Write("Enter a string: ");
+        string input = Console.ReadLine();
+CORRECT: string input = Console.ReadLine();
+
 RULE 1 — ONE CLASS PER FILE, NEVER REPEAT:
 Each class/exception/struct must appear in EXACTLY ONE file.
 NEVER define the same class in two different files — this causes CS0101 compile errors.
