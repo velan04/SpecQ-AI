@@ -295,8 +295,11 @@ class DotNetTestRunner:
         try:
             env = os.environ.copy()
             env["VSTEST_CONNECTION_TIMEOUT"] = "300"
+            env["DOTNET_EnableDiagnostics"] = "0"   # disables diagnostics pipe — fixes VSTest slow negotiation in containers
+            env["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1"
+            env["DOTNET_NOLOGO"] = "1"
             proc = subprocess.run(
-                [dotnet, "test", target, "-l", "console;verbosity=normal"],
+                [dotnet, "test", target, "--no-restore", "-l", "console;verbosity=normal"],
                 capture_output=True,
                 text=True,
                 timeout=300,
