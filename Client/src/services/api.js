@@ -327,7 +327,7 @@ export const questionsInBank = (qbId, token) => {
       qb_id: qbId,
       type: "Single",
       page: 1,
-      limit: 50,
+      limit: 100,
     }),
   })
   .then(r => r.json())
