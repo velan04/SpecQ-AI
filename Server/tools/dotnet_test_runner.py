@@ -110,15 +110,21 @@ class DotNetTestRunner:
     @classmethod
     def read_nunit_tests(cls, scaffolding_dir: str) -> str:
         """
-        Extract run.sh archive and return the content of all TestProject .cs files
-        concatenated as a string.  Called BEFORE AI generation so the agent knows
-        the exact class names, method names, and signatures the tests expect.
+        Return the content of all TestProject .cs files concatenated as a string.
+        MS1: extracts tar from run.sh. MS2: reads TestProject/ directly.
         Returns empty string on any failure (non-fatal).
         """
         runner = cls(scaffolding_dir=scaffolding_dir)
         run_sh = runner._find_run_sh()
         if not run_sh:
             return ""
+
+        # MS2 (MVC/WebAPI): no embedded tar — read TestProject directly
+        if not cls._has_embedded_tar(run_sh):
+            logger.info("read_nunit_tests: MS2 scaffold detected (no __ARCHIVE__)")
+            return runner._read_ms2_test_files()
+
+        # MS1 (Console): extract tar → find TestProject
         tmp = tempfile.mkdtemp(prefix="qc_dotnet_peek_")
         try:
             if not runner._extract_tar_from_run_sh(run_sh, tmp):
@@ -146,9 +152,8 @@ class DotNetTestRunner:
     @classmethod
     def read_template_source_files(cls, scaffolding_dir: str) -> dict:
         """
-        Extract run.sh archive and return {filename: content} for all .cs files
-        in dotnetapp/ (the student template), excluding test directories.
-        Called BEFORE AI generation so the agent follows the correct structure.
+        Return {filename: content} for all .cs files in dotnetapp/ (student template).
+        MS1: extracts tar from run.sh. MS2: reads dotnetapp/ directly.
         Returns empty dict on any failure (non-fatal).
         """
         TEST_DIRS = {"nunit", "junit", "test", "testproject", "__tests__"}
@@ -156,6 +161,13 @@ class DotNetTestRunner:
         run_sh = runner._find_run_sh()
         if not run_sh:
             return {}
+
+        # MS2: no embedded tar — read dotnetapp/ directly
+        if not cls._has_embedded_tar(run_sh):
+            logger.info("read_template_source_files: MS2 scaffold detected (no __ARCHIVE__)")
+            return runner._read_ms2_template_files()
+
+        # MS1: extract tar → find dotnetapp
         tmp = tempfile.mkdtemp(prefix="qc_dotnet_tmpl_")
         try:
             if not runner._extract_tar_from_run_sh(run_sh, tmp):
@@ -179,6 +191,54 @@ class DotNetTestRunner:
             return {}
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+
+    @staticmethod
+    def _has_embedded_tar(run_sh_path: str) -> bool:
+        """Return True if run.sh contains the __ARCHIVE__ marker (MS1 Console). MS2 does not."""
+        try:
+            with open(run_sh_path, "rb") as f:
+                chunk = f.read(65536)
+            return b"__ARCHIVE__" in chunk
+        except Exception:
+            return False
+
+    def _read_ms2_test_files(self) -> str:
+        """MS2: read TestProject .cs files directly from scaffolding_dir (no tar extraction)."""
+        test_project = self._find_dir(self.scaffolding_dir, "TestProject")
+        if not test_project:
+            logger.warning("MS2 read_nunit_tests: TestProject/ not found in %s", self.scaffolding_dir)
+            return ""
+        parts = []
+        for root, _dirs, files in os.walk(test_project):
+            for fname in sorted(files):
+                if fname.endswith(".cs"):
+                    fpath = os.path.join(root, fname)
+                    with open(fpath, encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                    parts.append(f"// === {fname} ===\n{content}")
+        result = "\n\n".join(parts)
+        logger.info("MS2 read_nunit_tests: read %d test file(s) (%d chars)", len(parts), len(result))
+        return result
+
+    def _read_ms2_template_files(self) -> dict:
+        """MS2: read dotnetapp/ .cs files directly from scaffolding_dir with relative paths."""
+        TEST_DIRS = {"nunit", "junit", "test", "testproject", "__tests__"}
+        dotnetapp_dir = self._find_dir(self.scaffolding_dir, "dotnetapp")
+        if not dotnetapp_dir:
+            logger.warning("MS2 read_template: dotnetapp/ not found in %s", self.scaffolding_dir)
+            return {}
+        result = {}
+        for root, dirs, files in os.walk(dotnetapp_dir):
+            dirs[:] = [d for d in dirs if d.lower() not in TEST_DIRS]
+            for fname in sorted(files):
+                if not fname.endswith(".cs"):
+                    continue
+                fpath = os.path.join(root, fname)
+                rel = os.path.relpath(fpath, dotnetapp_dir).replace("\\", "/")
+                with open(fpath, encoding="utf-8", errors="ignore") as f:
+                    result[rel] = f.read()
+        logger.info("MS2 read_template_source_files: found %s", list(result.keys()))
+        return result
 
     def _find_run_sh(self) -> Optional[str]:
         for root, _dirs, files in os.walk(self.scaffolding_dir):
