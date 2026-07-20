@@ -1034,7 +1034,13 @@ async def _build_import_response(data: dict, auth_header: str, question_data_ove
             json.dump(weights, f, indent=2)
         _logger.info("Saved testcase_weights.json — %d testcase(s)", len(weights))
 
-    # 4. Download ZIP — S3 needs Origin header only, no auth token
+    # 4. Download ZIP — clear any stale ZIP first so preview-testcases never
+    #    serves data from a previous question if this download fails or has no URL.
+    stale_zip = "data/imported_boilerplate.zip"
+    if os.path.exists(stale_zip):
+        os.remove(stale_zip)
+        _logger.info("Removed stale imported_boilerplate.zip before new download")
+
     zip_saved = await _download_zip(zip_url) if zip_url else False
 
     return {
