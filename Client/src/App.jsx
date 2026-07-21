@@ -209,6 +209,7 @@ function TestcaseViewerPage() {
   const [fileType,         setFileType]         = useState('nunit');
   const [activeFile,       setActiveFile]       = useState('');
   const [copied,           setCopied]           = useState('');
+  const [zipFilename,      setZipFilename]      = useState('');
   const tokenRef = useRef(null);
 
   useEffect(() => {
@@ -221,7 +222,7 @@ function TestcaseViewerPage() {
   const resetSearch = () => {
     setSearchResults([]); setSelectedItem(null);
     setQuestions([]); setSelectedQ(null); setSelectedQId('');
-    setSearchError(''); setTestcaseFiles(null); setImportErr('');
+    setSearchError(''); setTestcaseFiles(null); setImportErr(''); setZipFilename('');
   };
 
   const handleModeSwitch = (mode) => {
@@ -272,6 +273,7 @@ function TestcaseViewerPage() {
     try {
       const res = await importQuestion(selectedQId, token.trim(), selectedQ?.question_data || '');
       if (res.error) { setImportErr(res.error); setImporting(false); return; }
+      setZipFilename(res.zip_filename || '');
 
       // Retry up to 3 times with increasing delay — ZIP write may lag on server
       let raw = null;
@@ -486,6 +488,9 @@ function TestcaseViewerPage() {
                 {fileType === 'junit' ? 'Java' : 'C#'}
               </span>
               <span style={{ marginLeft:10, fontSize:10, color:'#585b70', fontWeight:400 }}>{fileList.length} file(s)</span>
+              {zipFilename && (
+                <span style={{ marginLeft:10, fontSize:10, color:'#6c7086', fontFamily:"'DM Mono',monospace", fontWeight:400 }}>📦 {zipFilename}</span>
+              )}
             </span>
             <button onClick={handleDownloadAll} style={{ fontSize:11, background:'#1e1e2e', color:'#a6adc8', border:'1px solid #313244', borderRadius:6, padding:'4px 12px', cursor:'pointer' }}>
               ⬇ Download All
